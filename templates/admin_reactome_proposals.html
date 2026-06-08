@@ -47,286 +47,139 @@
 
         <div class="existing-entries-container">
             <h2>KE-Reactome Proposal Dashboard</h2>
-            <p>Review and approve or reject KE-Reactome mapping proposals submitted by curators.</p>
+            <p>Review and approve or reject KE-Reactome mapping proposals submitted by curators. Use <kbd>a</kbd>/<kbd>r</kbd> to approve/reject, <kbd>↑</kbd>/<kbd>↓</kbd> to navigate, <kbd>?</kbd> for shortcuts.</p>
 
-            <table id="reactomeProposalsTable" class="display" style="width:100%">
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>KE &rarr; Reactome Pair</th>
-                        <th>Proposed Values</th>
-                        <th>Submitted By</th>
-                        <th>Score</th>
-                        <th>Status</th>
-                        <th>Submitted</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for proposal in proposals %}
-                    <tr>
-                        <td>{{ proposal.id }}</td>
-                        <td>
-                            <strong>{{ proposal.ke_id }}</strong> &rarr; <strong>{{ proposal.reactome_id }}</strong><br>
-                            <div class="proposal-detail">
-                                {{ proposal.ke_title }}<br>
-                                &rarr; {{ proposal.pathway_name }}
-                            </div>
-                        </td>
-                        <td>
-                            <div>Species: <strong>{{ proposal.species or 'Homo sapiens' }}</strong></div>
-                            <div>Confidence: <strong>{{ proposal.new_pair_confidence_level or proposal.proposed_confidence }}</strong></div>
-                        </td>
-                        <td>
-                            <div><strong>{{ proposal.provider_username or proposal.user_name or '—' }}</strong></div>
-                        </td>
-                        <td>{{ "%.3f"|format(proposal.suggestion_score) if proposal.suggestion_score else '&mdash;' }}</td>
-                        <td>
-                            <span class="status-{{ proposal.status }}">{{ proposal.status|title }}</span>
-                            {% if proposal.admin_notes %}
-                                <div class="proposal-detail">{{ proposal.admin_notes }}</div>
-                            {% endif %}
-                        </td>
-                        <td>{{ proposal.created_at_formatted if proposal.created_at_formatted else 'Unknown' }}</td>
-                        <td>
-                            <div class="proposal-actions">
-                                {% if proposal.status == 'pending' %}
-                                    <button class="btn-approve" onclick="approveReactomeProposal({{ proposal.id }})">Approve Proposal</button>
-                                    <button class="btn-reject" onclick="rejectReactomeProposal({{ proposal.id }})">Reject Proposal</button>
-                                {% endif %}
-                                <button class="btn-view" onclick="viewReactomeProposal({{ proposal.id }})">View Details</button>
-                            </div>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+            <!-- Two-column layout: table left, side panel right -->
+            <div style="display: grid; grid-template-columns: 1fr 380px; gap: 20px; align-items: start;">
+                <!-- LEFT: bulk action bar + table -->
+                <div>
+                    <div id="bulkActionBar" style="margin-bottom: 12px; display: none;">
+                        <button id="bulkApproveBtn" class="btn-approve" disabled>
+                            Approve selected (<span id="selectedCount">0</span>)
+                        </button>
+                    </div>
+
+                    <table id="reactomeProposalsTable" class="display" style="width:100%">
+                        <thead>
+                            <tr>
+                                <th><input type="checkbox" id="selectAll" title="Select all pending"></th>
+                                <th>ID</th>
+                                <th>KE &rarr; Reactome Pair</th>
+                                <th>Proposed Values</th>
+                                <th>Submitted By</th>
+                                <th>Score</th>
+                                <th>Status</th>
+                                <th>Submitted</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for proposal in proposals %}
+                            <tr data-proposal-id="{{ proposal.id }}"
+                                data-status="{{ proposal.status|e }}"
+                                data-ke-id="{{ proposal.ke_id|e }}"
+                                data-ke-title="{{ proposal.ke_title|e }}"
+                                data-pathway-id="{{ proposal.reactome_id|e }}"
+                                data-pathway-title="{{ proposal.pathway_name|e }}"
+                                data-confidence="{{ (proposal.new_pair_confidence_level or proposal.proposed_confidence)|e }}"
+                                data-proposed-relationship="{{ proposal.proposed_relationship|e if proposal.proposed_relationship else '' }}"
+                                data-proposed-basis="{{ proposal.proposed_basis|e if proposal.proposed_basis else '' }}"
+                                data-proposed-specificity="{{ proposal.proposed_specificity|e if proposal.proposed_specificity else '' }}"
+                                data-proposed-coverage="{{ proposal.proposed_coverage|e if proposal.proposed_coverage else '' }}"
+                                data-suggestion-score="{{ proposal.suggestion_score|e if proposal.suggestion_score else '' }}"
+                                data-submitted-by="{{ (proposal.provider_username or proposal.user_name)|e }}"
+                                data-created-at="{{ (proposal.created_at_formatted or proposal.created_at)|e }}">
+                                <td>
+                                    {% if proposal.status == 'pending' %}
+                                    <input type="checkbox" class="proposal-select"
+                                           data-id="{{ proposal.id }}"
+                                           data-status="{{ proposal.status }}">
+                                    {% endif %}
+                                </td>
+                                <td>{{ proposal.id }}</td>
+                                <td>
+                                    <strong>{{ proposal.ke_id }}</strong> &rarr; <strong>{{ proposal.reactome_id }}</strong><br>
+                                    <div class="proposal-detail">
+                                        {{ proposal.ke_title }}<br>
+                                        &rarr; {{ proposal.pathway_name }}
+                                    </div>
+                                </td>
+                                <td>
+                                    <div>Species: <strong>{{ proposal.species or 'Homo sapiens' }}</strong></div>
+                                    <div>Confidence: <strong>{{ proposal.new_pair_confidence_level or proposal.proposed_confidence }}</strong></div>
+                                </td>
+                                <td>
+                                    <div><strong>{{ proposal.provider_username or proposal.user_name or '—' }}</strong></div>
+                                </td>
+                                <td>{{ "%.3f"|format(proposal.suggestion_score) if proposal.suggestion_score else '&mdash;' }}</td>
+                                <td>
+                                    <span class="status-{{ proposal.status }}">{{ proposal.status|title }}</span>
+                                    {% if proposal.admin_notes %}
+                                        <div class="proposal-detail">{{ proposal.admin_notes }}</div>
+                                    {% endif %}
+                                </td>
+                                <td>{{ proposal.created_at_formatted if proposal.created_at_formatted else 'Unknown' }}</td>
+                                <td>
+                                    <div class="proposal-actions">
+                                        {% if proposal.status == 'pending' %}
+                                            <button class="btn-approve" onclick="AdminProposals.handleApprove()">Approve Proposal</button>
+                                            <button class="btn-reject" onclick="AdminProposals.handleReject()">Reject Proposal</button>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- RIGHT: docked side panel -->
+                <div id="reviewPanel" style="position: sticky; top: 20px; border: 1px solid var(--color-border-light, #dee2e6); border-radius: 6px; padding: 16px; min-height: 300px; background: white;">
+                    <div id="reviewPanelContent">
+                        <p style="color: var(--color-text-muted, #6c757d);">Select a proposal to review.</p>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
-    <!-- Detail Modal -->
-    <div id="reactomeProposalModal" class="modal-panel" style="display: none; width: 600px; max-height: 80vh; overflow-y: auto;">
-        <h3>Reactome Proposal Details</h3>
-        <div id="reactomeModalContent"></div>
-        <div style="margin-top: 20px;">
-            <textarea id="reactomeAdminNotes" placeholder="Add admin notes (optional)" style="width: 100%; height: 80px; margin-bottom: 15px;"></textarea>
-        </div>
-        <div style="text-align: right;">
-            <button onclick="closeReactomeModal()" class="btn-clear" style="margin-right: 8px;">Close</button>
-            <button id="reactomeModalApproveBtn" onclick="confirmReactomeApprove()" class="btn-approve" style="display: none; padding:8px 16px;">Approve Proposal</button>
-            <button id="reactomeModalRejectBtn" onclick="confirmReactomeReject()" class="btn-reject" style="display: none; padding:8px 16px;">Reject Proposal</button>
+    <!-- Cheat-sheet modal -->
+    <div id="cheatSheetModal" class="modal-panel" style="display: none; width: 400px;">
+        <h3>Keyboard Shortcuts</h3>
+        <table style="border-collapse: collapse; width: 100%;">
+            <tr><td style="padding: 6px 12px 6px 0;"><kbd>a</kbd></td><td>Approve current proposal</td></tr>
+            <tr><td style="padding: 6px 12px 6px 0;"><kbd>r</kbd></td><td>Reject current proposal</td></tr>
+            <tr><td style="padding: 6px 12px 6px 0;"><kbd>↑</kbd> / <kbd>↓</kbd></td><td>Navigate pending queue</td></tr>
+            <tr><td style="padding: 6px 12px 6px 0;"><kbd>?</kbd></td><td>Toggle this cheat sheet</td></tr>
+        </table>
+        <div style="margin-top: 16px; text-align: right;">
+            <button onclick="AdminProposals.closeCheatSheet()" class="btn-secondary">Close</button>
         </div>
     </div>
-    <div id="reactomeModalOverlay" class="modal-overlay" style="display: none;" onclick="closeReactomeModal()"></div>
+    <div id="cheatSheetOverlay" class="modal-overlay" style="display: none;"
+         onclick="AdminProposals.closeCheatSheet()"></div>
 
     {% include 'components/footer.html' %}
 
     <script src="{{ url_for('static', filename='js/datatable-config.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/admin_proposals.js') }}"></script>
     <script>
-        let currentReactomeProposalId = null;
-        const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
-
-        // Escape user-controlled values before injecting into innerHTML to
-        // prevent stored XSS (Phase 25 review C-1). pathway_name, ke_title,
-        // species, admin_notes, and provider_username flow into the detail
-        // modal and are curator-controlled at proposal-submit time.
-        function escapeHtml(s) {
-            if (s === null || s === undefined) return '';
-            return String(s)
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#39;');
-        }
-
-        // Phase 37 ASMT-05: key->label map for four-question assessment answers.
-        // Duplicated per-template (each admin template carries its own inline
-        // IIFE today — see 37-PLAN.md Task 3 note). Sourced verbatim from
-        // main.js:1394-1397.
-        const stepLabels = {
-            step1: { causative: 'Causative', responsive: 'Responsive', bidirectional: 'Bidirectional', unclear: 'Unclear' },
-            step2: { known: 'Known connection', likely: 'Likely connection', possible: 'Possible connection', uncertain: 'Uncertain connection' },
-            step3: { specific: 'KE-specific', includes: 'Includes KE', loose: 'Loosely related' },
-            step4: { complete: 'Complete mechanism', keysteps: 'Key steps only', minor: 'Minor aspects' }
-        };
-
-        $(document).ready(function() {
-            $('#reactomeProposalsTable').DataTable(
-                DataTableConfig.merge('base', {
-                    order: [[0, 'desc']],
-                    pageLength: 25,
-                    responsive: true,
-                    columnDefs: [
-                        { width: '5%', targets: 0 },
-                        { width: '25%', targets: 1 },
-                        { width: '18%', targets: 2 },
-                        { width: '12%', targets: 3 },
-                        { width: '8%', targets: 4 },
-                        { width: '8%', targets: 5 },
-                        { width: '10%', targets: 6 },
-                        { width: '14%', targets: 7, orderable: false }
-                    ]
-                })
-            );
-        });
-
         function filterReactomeProposals() {
-            const status = document.getElementById('reactomeStatusFilter').value;
-            const currentUrl = new URL(window.location);
+            var status = document.getElementById('reactomeStatusFilter').value;
+            var currentUrl = new URL(window.location);
             currentUrl.searchParams.set('status', status);
             window.location = currentUrl.toString();
         }
 
-        function viewReactomeProposal(proposalId) {
-            currentReactomeProposalId = proposalId;
-            $.get(`/admin/reactome-proposals/${proposalId}`)
-                .done(function(proposal) { showReactomeProposalModal(proposal); })
-                .fail(function(xhr) {
-                    alert('Error loading Reactome proposal: ' + (xhr.responseJSON?.error || 'Unknown error'));
-                });
-        }
-
-        function showReactomeProposalModal(proposal) {
-            const modal = document.getElementById('reactomeProposalModal');
-            const overlay = document.getElementById('reactomeModalOverlay');
-            const content = document.getElementById('reactomeModalContent');
-            const approveBtn = document.getElementById('reactomeModalApproveBtn');
-            const rejectBtn = document.getElementById('reactomeModalRejectBtn');
-
-            // Score is numeric; coerce defensively before formatting.
-            const scoreText = (proposal.suggestion_score !== null && proposal.suggestion_score !== undefined)
-                ? Number(proposal.suggestion_score).toFixed(3)
-                : '&mdash;';
-            // Status is a DB enum (pending/approved/rejected) but escape both
-            // the class fragment and display text for defense-in-depth.
-            const statusRaw = proposal.status || '';
-            const statusEsc = escapeHtml(statusRaw);
-            const confidence = proposal.new_pair_confidence_level || proposal.proposed_confidence;
-            const submittedBy = proposal.provider_username || proposal.user_name;
-            const submittedAt = proposal.created_at_formatted || proposal.created_at;
-
-            content.innerHTML = `
-                <div style="margin-bottom: 20px;">
-                    <h4>Mapping Information</h4>
-                    <div><strong>KE ID:</strong> ${proposal.ke_id ? escapeHtml(proposal.ke_id) : '&mdash;'}</div>
-                    <div><strong>KE Title:</strong> ${proposal.ke_title ? escapeHtml(proposal.ke_title) : '&mdash;'}</div>
-                    <div><strong>Reactome ID:</strong> ${proposal.reactome_id ? escapeHtml(proposal.reactome_id) : '&mdash;'}</div>
-                    <div><strong>Pathway Name:</strong> ${proposal.pathway_name ? escapeHtml(proposal.pathway_name) : '&mdash;'}</div>
-                    <div><strong>Species:</strong> ${escapeHtml(proposal.species || 'Homo sapiens')}</div>
-                </div>
-                <div style="margin-bottom: 20px;">
-                    <h4>Proposed Values</h4>
-                    <div><strong>Confidence Level:</strong> ${confidence ? escapeHtml(confidence) : '&mdash;'}</div>
-                    <div><strong>Suggestion Score:</strong> ${scoreText}</div>
-                </div>
-                <div style="margin-bottom: 20px;">
-                    <h4>Submission Details</h4>
-                    <div><strong>Submitted By:</strong> ${submittedBy ? escapeHtml(submittedBy) : '&mdash;'}</div>
-                    <div><strong>Submitted At:</strong> ${submittedAt ? escapeHtml(submittedAt) : '&mdash;'}</div>
-                    <div><strong>Status:</strong> <span class="status-${statusEsc}">${statusEsc}</span></div>
-                    ${proposal.admin_notes ? `<div><strong>Admin Notes:</strong> ${escapeHtml(proposal.admin_notes)}</div>` : ''}
-                    ${proposal.approved_at_formatted ? `<div><strong>Reviewed At:</strong> ${escapeHtml(proposal.approved_at_formatted)}</div>` : ''}
-                </div>
-
-                ${(() => {
-                    const p = proposal;
-                    const hasAssessment = p.proposed_relationship != null
-                        || p.proposed_basis != null
-                        || p.proposed_specificity != null
-                        || p.proposed_coverage != null;
-                    const assessmentRows = hasAssessment
-                        ? `<div><strong>Relationship:</strong> ${escapeHtml(stepLabels.step1[p.proposed_relationship] || p.proposed_relationship || '—')}</div>
-                           <div><strong>Basis:</strong> ${escapeHtml(stepLabels.step2[p.proposed_basis] || p.proposed_basis || '—')}</div>
-                           <div><strong>Specificity:</strong> ${escapeHtml(stepLabels.step3[p.proposed_specificity] || p.proposed_specificity || '—')}</div>
-                           <div><strong>Coverage:</strong> ${escapeHtml(stepLabels.step4[p.proposed_coverage] || p.proposed_coverage || '—')}</div>`
-                        : `<div style="font-size: 13px; color: var(--color-text-muted, #6c757d);">No assessment submitted (legacy proposal)</div>`;
-                    return `<div style="margin-bottom: 20px; border-top: 1px solid var(--color-border-light); padding-top: 16px;">
-                        <h4 style="margin-bottom: 10px;">Assessment</h4>
-                        ${assessmentRows}
-                        <div><strong>Derived confidence:</strong> ${escapeHtml(confidence || '—')}</div>
-                    </div>`;
-                })()}
-            `;
-
-            if (proposal.status === 'pending') {
-                approveBtn.style.display = 'inline-block';
-                rejectBtn.style.display = 'inline-block';
-                approveBtn.disabled = false;
-            } else {
-                approveBtn.style.display = 'none';
-                rejectBtn.style.display = 'none';
-            }
-
-            modal.style.display = 'block';
-            overlay.style.display = 'block';
-        }
-
-        function closeReactomeModal() {
-            document.getElementById('reactomeProposalModal').style.display = 'none';
-            document.getElementById('reactomeModalOverlay').style.display = 'none';
-            currentReactomeProposalId = null;
-        }
-
-        function approveReactomeProposal(proposalId) {
-            currentReactomeProposalId = proposalId;
-            if (!confirm('Approve this KE-Reactome proposal? This will create a live mapping.')) return;
-            $.post(`/admin/reactome-proposals/${proposalId}/approve`, { admin_notes: '', csrf_token: csrfToken })
-                .done(function(response) {
-                    alert(response.message || 'Proposal approved. Mapping created.');
-                    location.reload();
-                })
-                .fail(function(xhr) {
-                    alert('Error: ' + (xhr.responseJSON?.error || 'Failed to approve Reactome proposal'));
-                });
-        }
-
-        function rejectReactomeProposal(proposalId) {
-            currentReactomeProposalId = proposalId;
-            const reason = prompt('Reason for rejection (optional):') || '';
-            $.post(`/admin/reactome-proposals/${proposalId}/reject`, { admin_notes: reason, csrf_token: csrfToken })
-                .done(function(response) {
-                    alert(response.message || 'Proposal rejected.');
-                    location.reload();
-                })
-                .fail(function(xhr) {
-                    alert('Error: ' + (xhr.responseJSON?.error || 'Failed to reject Reactome proposal'));
-                });
-        }
-
-        function confirmReactomeApprove() {
-            if (!currentReactomeProposalId) return;
-            const notes = document.getElementById('reactomeAdminNotes').value;
-            $.post(`/admin/reactome-proposals/${currentReactomeProposalId}/approve`, {
-                admin_notes: notes,
-                csrf_token: csrfToken
-            })
-                .done(function(response) {
-                    alert(response.message || 'Proposal approved. Mapping created.');
-                    closeReactomeModal();
-                    location.reload();
-                })
-                .fail(function(xhr) {
-                    alert('Error: ' + (xhr.responseJSON?.error || 'Failed to approve Reactome proposal'));
-                });
-        }
-
-        function confirmReactomeReject() {
-            if (!currentReactomeProposalId) return;
-            const notes = document.getElementById('reactomeAdminNotes').value;
-            $.post(`/admin/reactome-proposals/${currentReactomeProposalId}/reject`, {
-                admin_notes: notes,
-                csrf_token: csrfToken
-            })
-                .done(function(response) {
-                    alert(response.message || 'Proposal rejected.');
-                    closeReactomeModal();
-                    location.reload();
-                })
-                .fail(function(xhr) {
-                    alert('Error: ' + (xhr.responseJSON?.error || 'Failed to reject Reactome proposal'));
-                });
-        }
+        AdminProposals.init({
+            resource: 'reactome',
+            detailUrl: '/admin/reactome-proposals',
+            approveUrl: '/admin/reactome-proposals',
+            rejectUrl: '/admin/reactome-proposals',
+            bulkApproveUrl: '/admin/reactome-proposals/bulk-approve',
+            tableId: 'reactomeProposalsTable',
+            csrfToken: '{{ csrf_token() }}'
+        });
     </script>
 </body>
 </html>

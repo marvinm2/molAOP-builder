@@ -53,334 +53,150 @@
 
         <div class="existing-entries-container">
             <h2>Proposal Management Dashboard</h2>
-            <p>Review and manage user-submitted proposals for mapping changes.</p>
+            <p>Review and manage user-submitted proposals for mapping changes. Use <kbd>a</kbd>/<kbd>r</kbd> to approve/reject, <kbd>↑</kbd>/<kbd>↓</kbd> to navigate, <kbd>?</kbd> for shortcuts.</p>
 
-            <table id="proposalsTable" class="display" style="width:100%">
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>Mapping</th>
-                        <th>Proposed Changes</th>
-                        <th>User Details</th>
-                        <th>Status</th>
-                        <th>Submitted</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for proposal in proposals %}
-                    <tr>
-                        <td>{{ proposal.id }}</td>
-                        <td>
-                            <strong>{{ proposal.ke_id }}</strong> → <strong>{{ proposal.wp_id }}</strong><br>
-                            <div class="proposal-detail">
-                                {{ proposal.ke_title }}<br>
-                                → {{ proposal.wp_title }}
-                            </div>
-                        </td>
-                        <td>
-                            {% if proposal.proposed_delete %}
-                                <span class="btn-danger" style="font-size: 12px; padding: 4px 8px;">DELETE MAPPING</span>
-                            {% else %}
-                                {% if proposal.proposed_confidence %}
-                                    <div>Confidence: <strong>{{ proposal.current_confidence_level }}</strong> → <strong>{{ proposal.proposed_confidence }}</strong></div>
-                                {% endif %}
-                                {% if proposal.proposed_connection_type %}
-                                    <div>Type: <strong>{{ proposal.current_connection_type }}</strong> → <strong>{{ proposal.proposed_connection_type }}</strong></div>
-                                {% endif %}
-                            {% endif %}
-                        </td>
-                        <td>
-                            <div><strong>{{ proposal.user_name }}</strong></div>
-                            <div class="proposal-detail">{{ proposal.user_email }}</div>
-                            <div class="proposal-detail">{{ proposal.user_affiliation }}</div>
-                            <div class="proposal-detail">GitHub: {{ proposal.github_username }}</div>
-                        </td>
-                        <td>
-                            <span class="status-{{ proposal.status }}">{{ proposal.status|title }}</span>
-                            {% if proposal.admin_notes %}
-                                <div class="proposal-detail">{{ proposal.admin_notes }}</div>
-                            {% endif %}
-                        </td>
-                        <td>{{ proposal.created_at_formatted if proposal.created_at_formatted else 'Unknown' }}</td>
-                        <td>
-                            <div class="proposal-actions">
-                                {% if proposal.status == 'pending' %}
-                                    <button class="btn-approve" onclick="approveProposal({{ proposal.id }})">Approve</button>
-                                    <button class="btn-reject" onclick="rejectProposal({{ proposal.id }})">Reject</button>
-                                {% endif %}
-                                <button class="btn-view" onclick="viewProposal({{ proposal.id }})">Details</button>
-                            </div>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+            <!-- Two-column layout: table left, side panel right -->
+            <div style="display: grid; grid-template-columns: 1fr 380px; gap: 20px; align-items: start;">
+                <!-- LEFT: bulk action bar + table -->
+                <div>
+                    <div id="bulkActionBar" style="margin-bottom: 12px; display: none;">
+                        <button id="bulkApproveBtn" class="btn-approve" disabled>
+                            Approve selected (<span id="selectedCount">0</span>)
+                        </button>
+                    </div>
+
+                    <table id="proposalsTable" class="display" style="width:100%">
+                        <thead>
+                            <tr>
+                                <th><input type="checkbox" id="selectAll" title="Select all pending"></th>
+                                <th>ID</th>
+                                <th>Mapping</th>
+                                <th>Proposed Changes</th>
+                                <th>User Details</th>
+                                <th>Status</th>
+                                <th>Submitted</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for proposal in proposals %}
+                            <tr data-proposal-id="{{ proposal.id }}"
+                                data-status="{{ proposal.status|e }}"
+                                data-ke-id="{{ proposal.ke_id|e }}"
+                                data-ke-title="{{ proposal.ke_title|e }}"
+                                data-pathway-id="{{ proposal.wp_id|e }}"
+                                data-pathway-title="{{ proposal.wp_title|e }}"
+                                data-confidence="{{ (proposal.proposed_confidence or proposal.current_confidence_level)|e }}"
+                                data-connection-type="{{ (proposal.proposed_connection_type or proposal.current_connection_type)|e }}"
+                                data-proposed-relationship="{{ proposal.proposed_relationship|e if proposal.proposed_relationship else '' }}"
+                                data-proposed-basis="{{ proposal.proposed_basis|e if proposal.proposed_basis else '' }}"
+                                data-proposed-specificity="{{ proposal.proposed_specificity|e if proposal.proposed_specificity else '' }}"
+                                data-proposed-coverage="{{ proposal.proposed_coverage|e if proposal.proposed_coverage else '' }}"
+                                data-suggestion-score="{{ proposal.suggestion_score|e if proposal.suggestion_score else '' }}"
+                                data-submitted-by="{{ (proposal.github_username or proposal.user_name)|e }}"
+                                data-created-at="{{ (proposal.created_at_formatted or proposal.created_at)|e }}"
+                                data-uuid="{{ proposal.uuid|e if proposal.uuid else '' }}">
+                                <td>
+                                    {% if proposal.status == 'pending' %}
+                                    <input type="checkbox" class="proposal-select"
+                                           data-id="{{ proposal.id }}"
+                                           data-status="{{ proposal.status }}">
+                                    {% endif %}
+                                </td>
+                                <td>{{ proposal.id }}</td>
+                                <td>
+                                    <strong>{{ proposal.ke_id }}</strong> → <strong>{{ proposal.wp_id }}</strong><br>
+                                    <div class="proposal-detail">
+                                        {{ proposal.ke_title }}<br>
+                                        → {{ proposal.wp_title }}
+                                    </div>
+                                </td>
+                                <td>
+                                    {% if proposal.proposed_delete %}
+                                        <span class="btn-danger" style="font-size: 12px; padding: 4px 8px;">DELETE MAPPING</span>
+                                    {% else %}
+                                        {% if proposal.proposed_confidence %}
+                                            <div>Confidence: <strong>{{ proposal.current_confidence_level }}</strong> → <strong>{{ proposal.proposed_confidence }}</strong></div>
+                                        {% endif %}
+                                        {% if proposal.proposed_connection_type %}
+                                            <div>Type: <strong>{{ proposal.current_connection_type }}</strong> → <strong>{{ proposal.proposed_connection_type }}</strong></div>
+                                        {% endif %}
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div><strong>{{ proposal.user_name }}</strong></div>
+                                    <div class="proposal-detail">{{ proposal.user_email }}</div>
+                                    <div class="proposal-detail">{{ proposal.user_affiliation }}</div>
+                                    <div class="proposal-detail">GitHub: {{ proposal.github_username }}</div>
+                                </td>
+                                <td>
+                                    <span class="status-{{ proposal.status }}">{{ proposal.status|title }}</span>
+                                    {% if proposal.admin_notes %}
+                                        <div class="proposal-detail">{{ proposal.admin_notes }}</div>
+                                    {% endif %}
+                                </td>
+                                <td>{{ proposal.created_at_formatted if proposal.created_at_formatted else 'Unknown' }}</td>
+                                <td>
+                                    <div class="proposal-actions">
+                                        {% if proposal.status == 'pending' %}
+                                            <button class="btn-approve" onclick="AdminProposals.handleApprove()">Approve</button>
+                                            <button class="btn-reject" onclick="AdminProposals.handleReject()">Reject</button>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- RIGHT: docked side panel -->
+                <div id="reviewPanel" style="position: sticky; top: 20px; border: 1px solid var(--color-border-light, #dee2e6); border-radius: 6px; padding: 16px; min-height: 300px; background: white;">
+                    <div id="reviewPanelContent">
+                        <p style="color: var(--color-text-muted, #6c757d);">Select a proposal to review.</p>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
-    <!-- Proposal Detail Modal -->
-    <div id="proposalModal" class="modal-panel" style="display: none; width: 600px; max-height: 80vh; overflow-y: auto;">
-        <h3 id="modalTitle">Proposal Details</h3>
-        <div id="modalContent"></div>
-        <div style="margin-top: 20px;">
-            <textarea id="adminNotes" placeholder="Add admin notes (optional)" style="width: 100%; height: 80px; margin-bottom: 15px;"></textarea>
-        </div>
-        <div style="text-align: right;">
-            <button onclick="closeModal()" class="btn-secondary">Close</button>
-            <button id="modalApproveBtn" onclick="confirmApprove()" class="btn-approve" style="display: none;">Approve Proposal</button>
-            <button id="modalRejectBtn" onclick="confirmReject()" class="btn-reject" style="display: none;">Reject Proposal</button>
+    <!-- Cheat-sheet modal (reuse modal-panel shell) -->
+    <div id="cheatSheetModal" class="modal-panel" style="display: none; width: 400px;">
+        <h3>Keyboard Shortcuts</h3>
+        <table style="border-collapse: collapse; width: 100%;">
+            <tr><td style="padding: 6px 12px 6px 0;"><kbd>a</kbd></td><td>Approve current proposal</td></tr>
+            <tr><td style="padding: 6px 12px 6px 0;"><kbd>r</kbd></td><td>Reject current proposal</td></tr>
+            <tr><td style="padding: 6px 12px 6px 0;"><kbd>↑</kbd> / <kbd>↓</kbd></td><td>Navigate pending queue</td></tr>
+            <tr><td style="padding: 6px 12px 6px 0;"><kbd>?</kbd></td><td>Toggle this cheat sheet</td></tr>
+        </table>
+        <div style="margin-top: 16px; text-align: right;">
+            <button onclick="AdminProposals.closeCheatSheet()" class="btn-secondary">Close</button>
         </div>
     </div>
-
-    <!-- Modal Overlay -->
-    <div id="modalOverlay" class="modal-overlay" style="display: none;" onclick="closeModal()"></div>
+    <div id="cheatSheetOverlay" class="modal-overlay" style="display: none;"
+         onclick="AdminProposals.closeCheatSheet()"></div>
 
     {% include 'components/footer.html' %}
 
     <script src="{{ url_for('static', filename='js/datatable-config.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/admin_proposals.js') }}"></script>
     <script>
-        let currentProposalId = null;
-
-        // Setup CSRF token for all AJAX requests
-        const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
-
-        // Phase 32 review C-1 port: escape user-controlled values before
-        // injecting into innerHTML to prevent stored XSS. user_name, user_email,
-        // user_affiliation, ke_title, wp_title, admin_notes, github_username
-        // and other proposer-supplied fields flow into the detail modal and
-        // are curator-controlled at proposal-submit time. Mirrors the helper
-        // defined in templates/admin_reactome_proposals.html (Phase 25 review C-1).
-        function escapeHtml(s) {
-            if (s === null || s === undefined) return '';
-            return String(s)
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#39;');
-        }
-
-        // Phase 37 ASMT-06: key→label map for four-question assessment answers.
-        // Sourced verbatim from main.js:1394-1397 — single source of truth is
-        // the submit-side form; this copy enables read-only display in the admin
-        // modal without importing main.js into the admin template.
-        const stepLabels = {
-            step1: { causative: 'Causative', responsive: 'Responsive', bidirectional: 'Bidirectional', unclear: 'Unclear' },
-            step2: { known: 'Known connection', likely: 'Likely connection', possible: 'Possible connection', uncertain: 'Uncertain connection' },
-            step3: { specific: 'KE-specific', includes: 'Includes KE', loose: 'Loosely related' },
-            step4: { complete: 'Complete mechanism', keysteps: 'Key steps only', minor: 'Minor aspects' }
-        };
-
-        $(document).ready(function() {
-            // Setup DataTable using shared configuration
-            $('#proposalsTable').DataTable(
-                DataTableConfig.merge('base', {
-                    order: [[0, 'desc']],
-                    pageLength: 25,
-                    responsive: true,
-                    columnDefs: [
-                        { width: '5%', targets: 0 },
-                        { width: '25%', targets: 1 },
-                        { width: '20%', targets: 2 },
-                        { width: '20%', targets: 3 },
-                        { width: '10%', targets: 4 },
-                        { width: '10%', targets: 5 },
-                        { width: '10%', targets: 6, orderable: false }
-                    ]
-                })
-            );
-        });
-
         function filterProposals() {
-            const status = document.getElementById('statusFilter').value;
-            const currentUrl = new URL(window.location);
+            var status = document.getElementById('statusFilter').value;
+            var currentUrl = new URL(window.location);
             currentUrl.searchParams.set('status', status);
             window.location = currentUrl.toString();
         }
 
-        function viewProposal(proposalId) {
-            currentProposalId = proposalId;
-
-            $.get(`/admin/proposals/${proposalId}`)
-                .done(function(proposal) {
-                    showProposalModal(proposal);
-                })
-                .fail(function(xhr) {
-                    alert('Error loading proposal: ' + (xhr.responseJSON?.error || 'Unknown error'));
-                });
-        }
-
-        function showProposalModal(proposal) {
-            const modal = document.getElementById('proposalModal');
-            const overlay = document.getElementById('modalOverlay');
-            const content = document.getElementById('modalContent');
-            const approveBtn = document.getElementById('modalApproveBtn');
-            const rejectBtn = document.getElementById('modalRejectBtn');
-
-            // Status is a DB enum (pending/approved/rejected) but escape both
-            // the class fragment and display text for defense-in-depth (mirrors
-            // admin_reactome_proposals.html L191-192).
-            const statusRaw = proposal.status || '';
-            const statusEsc = escapeHtml(statusRaw);
-            const statusTitle = statusRaw ? statusRaw.charAt(0).toUpperCase() + statusRaw.slice(1) : '';
-            const statusTitleEsc = escapeHtml(statusTitle);
-
-            let changesHtml = '';
-            if (proposal.proposed_delete) {
-                changesHtml = '<div class="btn-danger" style="font-size: 16px; padding: 8px 12px; display: inline-block;">DELETE THIS MAPPING</div>';
-            } else {
-                if (proposal.proposed_confidence) {
-                    changesHtml += `<div><strong>Confidence Level:</strong> ${escapeHtml(proposal.current_confidence_level)} → <strong>${escapeHtml(proposal.proposed_confidence)}</strong></div>`;
-                }
-                if (proposal.proposed_connection_type) {
-                    changesHtml += `<div><strong>Connection Type:</strong> ${escapeHtml(proposal.current_connection_type)} → <strong>${escapeHtml(proposal.proposed_connection_type)}</strong></div>`;
-                }
-            }
-
-            content.innerHTML = `
-                <div style="margin-bottom: 20px;">
-                    <h4>Mapping Information</h4>
-                    <div><strong>KE ID:</strong> ${escapeHtml(proposal.ke_id)}</div>
-                    <div><strong>KE Title:</strong> ${escapeHtml(proposal.ke_title)}</div>
-                    <div><strong>WP ID:</strong> ${escapeHtml(proposal.wp_id)}</div>
-                    <div><strong>WP Title:</strong> ${escapeHtml(proposal.wp_title)}</div>
-                    <div><strong>Current Confidence:</strong> ${escapeHtml(proposal.current_confidence_level)}</div>
-                    <div><strong>Current Connection:</strong> ${escapeHtml(proposal.current_connection_type)}</div>
-                </div>
-
-                <div class="filter-section" style="margin-bottom: 20px;">
-                    <h4>Proposed Changes</h4>
-                    ${changesHtml || '<div>No specific changes requested</div>'}
-                </div>
-
-                <div style="margin-bottom: 20px;">
-                    <h4>User Information</h4>
-                    <div><strong>Name:</strong> ${escapeHtml(proposal.user_name)}</div>
-                    <div><strong>Email:</strong> ${escapeHtml(proposal.user_email)}</div>
-                    <div><strong>Affiliation:</strong> ${escapeHtml(proposal.user_affiliation)}</div>
-                    <div><strong>GitHub:</strong> ${escapeHtml(proposal.github_username)}</div>
-                    <div><strong>Submitted:</strong> ${escapeHtml(proposal.created_at_formatted || proposal.created_at)}</div>
-                </div>
-
-                <div style="margin-bottom: 15px;">
-                    <h4>Status</h4>
-                    <div><strong>Current Status:</strong> <span class="status-${statusEsc}">${statusTitleEsc}</span></div>
-                    ${proposal.admin_notes ? `<div><strong>Admin Notes:</strong> ${escapeHtml(proposal.admin_notes)}</div>` : ''}
-                    ${proposal.approved_by ? `<div><strong>Processed By:</strong> ${escapeHtml(proposal.approved_by)}</div>` : ''}
-                    ${proposal.rejected_by ? `<div><strong>Processed By:</strong> ${escapeHtml(proposal.rejected_by)}</div>` : ''}
-                </div>
-
-                <div class="filter-section" style="margin-bottom: 15px;">
-                    <h4 style="margin-top: 0;">Admin Details</h4>
-                    <div><strong>Suggestion Score:</strong> ${proposal.suggestion_score !== null && proposal.suggestion_score !== undefined ? proposal.suggestion_score.toFixed(3) : '&mdash;'}</div>
-                    <div><strong>Proposal UUID:</strong> <code style="font-size: 12px;">${escapeHtml(proposal.uuid || '&mdash;')}</code></div>
-                </div>
-
-                ${(() => {
-                    const p = proposal;
-                    const hasAssessment = p.proposed_relationship != null
-                        || p.proposed_basis != null
-                        || p.proposed_specificity != null
-                        || p.proposed_coverage != null;
-                    const body = hasAssessment
-                        ? `<div><strong>Relationship:</strong> ${escapeHtml(stepLabels.step1[p.proposed_relationship] || p.proposed_relationship || '—')}</div>
-                           <div><strong>Basis:</strong> ${escapeHtml(stepLabels.step2[p.proposed_basis] || p.proposed_basis || '—')}</div>
-                           <div><strong>Specificity:</strong> ${escapeHtml(stepLabels.step3[p.proposed_specificity] || p.proposed_specificity || '—')}</div>
-                           <div><strong>Coverage:</strong> ${escapeHtml(stepLabels.step4[p.proposed_coverage] || p.proposed_coverage || '—')}</div>`
-                        : `<div style="font-size: 13px; color: var(--color-text-muted, #6c757d);">No assessment submitted (legacy proposal)</div>`;
-                    return `<div style="margin-bottom: 20px; border-top: 1px solid var(--color-border-light); padding-top: 16px;">
-                        <h4 style="margin-bottom: 10px;">Assessment</h4>
-                        ${body}
-                    </div>`;
-                })()}
-            `;
-
-            // Show action buttons only for pending proposals
-            if (proposal.status === 'pending') {
-                approveBtn.style.display = 'inline-block';
-                rejectBtn.style.display = 'inline-block';
-            } else {
-                approveBtn.style.display = 'none';
-                rejectBtn.style.display = 'none';
-            }
-
-            modal.style.display = 'block';
-            overlay.style.display = 'block';
-        }
-
-        function approveProposal(proposalId) {
-            if (confirm('Are you sure you want to approve this proposal? This will apply the changes to the mapping.')) {
-                currentProposalId = proposalId;
-                viewProposal(proposalId); // Show modal for admin notes
-            }
-        }
-
-        function rejectProposal(proposalId) {
-            if (confirm('Are you sure you want to reject this proposal?')) {
-                currentProposalId = proposalId;
-                viewProposal(proposalId); // Show modal for admin notes
-            }
-        }
-
-        function confirmApprove() {
-            if (!currentProposalId) return;
-
-            const adminNotes = document.getElementById('adminNotes').value;
-            const formData = new FormData();
-            formData.append('admin_notes', adminNotes);
-            formData.append('csrf_token', csrfToken);
-
-            fetch(`/admin/proposals/${currentProposalId}/approve`, {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.message) {
-                    alert('Success: ' + data.message);
-                    location.reload();
-                } else {
-                    alert('Error: ' + (data.error || 'Unknown error'));
-                }
-            })
-            .catch(error => {
-                alert('Error: ' + error);
-            });
-        }
-
-        function confirmReject() {
-            if (!currentProposalId) return;
-
-            const adminNotes = document.getElementById('adminNotes').value || 'No reason provided';
-            const formData = new FormData();
-            formData.append('admin_notes', adminNotes);
-            formData.append('csrf_token', csrfToken);
-
-            fetch(`/admin/proposals/${currentProposalId}/reject`, {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.message) {
-                    alert('Success: ' + data.message);
-                    location.reload();
-                } else {
-                    alert('Error: ' + (data.error || 'Unknown error'));
-                }
-            })
-            .catch(error => {
-                alert('Error: ' + error);
-            });
-        }
-
-        function closeModal() {
-            document.getElementById('proposalModal').style.display = 'none';
-            document.getElementById('modalOverlay').style.display = 'none';
-            document.getElementById('adminNotes').value = '';
-            currentProposalId = null;
-        }
+        AdminProposals.init({
+            resource: 'wp',
+            detailUrl: '/admin/proposals',
+            approveUrl: '/admin/proposals',
+            rejectUrl: '/admin/proposals',
+            bulkApproveUrl: '/admin/proposals/bulk-approve',
+            tableId: 'proposalsTable',
+            csrfToken: '{{ csrf_token() }}'
+        });
     </script>
 </body>
 </html>
