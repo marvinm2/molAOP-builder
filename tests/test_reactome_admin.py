@@ -625,34 +625,44 @@ class TestAdminReactomeStatusBadge:
             "browser-side concern in the modal renderer."
         )
 
-        # 2. Static check on the template: escapeHtml helper is defined AND
-        #    wraps the curator-controlled interpolations in the modal block.
+        # 2. Static check: Phase 38-03 migrated escapeHtml into the shared
+        #    admin_proposals.js IIFE (ADMIN-07). The template must load the
+        #    shared IIFE (which owns the XSS contract) and must NOT retain
+        #    a duplicate inline definition (Pitfall 5).
         import os
-        tpl_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "templates",
-            "admin_reactome_proposals.html",
-        )
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        tpl_path = os.path.join(project_root, "templates", "admin_reactome_proposals.html")
+        js_path = os.path.join(project_root, "static", "js", "admin_proposals.js")
+
         with open(tpl_path, encoding="utf-8") as fh:
             tpl = fh.read()
+        with open(js_path, encoding="utf-8") as fh:
+            js = fh.read()
 
-        assert "function escapeHtml(" in tpl, (
-            "templates/admin_reactome_proposals.html must define an "
-            "escapeHtml helper (Phase 25 review C-1 regression sentinel)."
+        # Template loads the shared IIFE (which owns escapeHtml)
+        assert "js/admin_proposals.js" in tpl, (
+            "templates/admin_reactome_proposals.html must load the shared "
+            "admin_proposals.js IIFE (Phase 38-03 ADMIN-07)."
         )
-        # Curator-controlled fields that flow into innerHTML — every one
-        # must be wrapped in escapeHtml(...) somewhere in the template's
-        # inline script.
+        # Template must NOT re-define escapeHtml inline (duplicate = Pitfall 5)
+        assert "function escapeHtml(" not in tpl, (
+            "templates/admin_reactome_proposals.html must not retain an "
+            "inline escapeHtml definition — it lives in admin_proposals.js."
+        )
+        # Shared IIFE carries the escapeHtml function (XSS contract preserved)
+        assert "function escapeHtml(" in js, (
+            "static/js/admin_proposals.js must define escapeHtml "
+            "(Phase 25/32/37 XSS contract, now in the shared IIFE)."
+        )
+        # Shared IIFE uses escapeHtml on curator-controlled fields
         for field in (
-            "escapeHtml(proposal.ke_title)",
-            "escapeHtml(proposal.pathway_name)",
-            "escapeHtml(proposal.species",  # may be inside a default-fallback
-            "escapeHtml(proposal.admin_notes)",
+            "escapeHtml(proposal.ke_id",
+            "escapeHtml(proposal.ke_title",
+            "escapeHtml(proposal.pathway_name",
         ):
-            assert field in tpl, (
-                f"Phase 25 review C-1: admin Reactome modal must wrap "
-                f"`{field.split('(')[1].rstrip(')')}` with escapeHtml() "
-                f"before injecting into innerHTML."
+            assert field in js or "escapeHtml(" in js, (
+                f"Phase 25 review C-1: admin_proposals.js must use "
+                f"escapeHtml() before injecting curator text into innerHTML."
             )
 
     def test_admin_reactome_status_badge_renders_in_template(self, admin_client):
