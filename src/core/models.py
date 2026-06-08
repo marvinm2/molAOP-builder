@@ -2667,6 +2667,38 @@ class ProposalModel:
         finally:
             conn.close()
 
+    def _update_status_on_conn(
+        self,
+        conn,
+        proposal_id: int,
+        status: str,
+        admin_username: str,
+        admin_notes: str,
+    ) -> None:
+        """Update WP proposal status on a caller-managed connection.
+
+        Raises ValueError for invalid status. Executes the UPDATE on `conn`
+        without calling conn.commit() or conn.close(). Any DB error propagates
+        to the caller for rollback.
+
+        Phase 38 (ADMIN-02): caller-managed transaction helper for bulk-approve.
+        """
+        if status not in ["approved", "rejected"]:
+            raise ValueError(f"Invalid status: {status}")
+        if status == "approved":
+            query = """
+                UPDATE proposals
+                SET status = ?, approved_by = ?, admin_notes = ?, approved_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """
+        else:
+            query = """
+                UPDATE proposals
+                SET status = ?, rejected_by = ?, admin_notes = ?, rejected_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """
+        conn.execute(query, (status, admin_username, admin_notes, proposal_id))
+
     def flag_proposal_stale(self, proposal_id: int, flagged_by: str) -> bool:
         """
         Flag a pending proposal as stale for admin review.
@@ -3515,6 +3547,38 @@ class GoProposalModel:
             return False
         finally:
             conn.close()
+
+    def _update_status_on_conn(
+        self,
+        conn,
+        proposal_id: int,
+        status: str,
+        admin_username: str,
+        admin_notes: str,
+    ) -> None:
+        """Update GO proposal status on a caller-managed connection.
+
+        Raises ValueError for invalid status. Executes the UPDATE on `conn`
+        without calling conn.commit() or conn.close(). Any DB error propagates
+        to the caller for rollback.
+
+        Phase 38 (ADMIN-02): caller-managed transaction helper for bulk-approve.
+        """
+        if status not in ["approved", "rejected"]:
+            raise ValueError(f"Invalid status: {status}")
+        if status == "approved":
+            query = """
+                UPDATE ke_go_proposals
+                SET status = ?, approved_by = ?, admin_notes = ?, approved_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """
+        else:
+            query = """
+                UPDATE ke_go_proposals
+                SET status = ?, rejected_by = ?, admin_notes = ?, rejected_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """
+        conn.execute(query, (status, admin_username, admin_notes, proposal_id))
 
     def flag_go_proposal_stale(self, proposal_id: int, flagged_by: str) -> bool:
         """
@@ -4876,3 +4940,35 @@ class ReactomeProposalModel:
             return False
         finally:
             conn.close()
+
+    def _update_status_on_conn(
+        self,
+        conn,
+        proposal_id: int,
+        status: str,
+        admin_username: str,
+        admin_notes: str,
+    ) -> None:
+        """Update Reactome proposal status on a caller-managed connection.
+
+        Raises ValueError for invalid status. Executes the UPDATE on `conn`
+        without calling conn.commit() or conn.close(). Any DB error propagates
+        to the caller for rollback.
+
+        Phase 38 (ADMIN-02): caller-managed transaction helper for bulk-approve.
+        """
+        if status not in ["approved", "rejected"]:
+            raise ValueError(f"Invalid status: {status}")
+        if status == "approved":
+            query = """
+                UPDATE ke_reactome_proposals
+                SET status = ?, approved_by = ?, admin_notes = ?, approved_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """
+        else:
+            query = """
+                UPDATE ke_reactome_proposals
+                SET status = ?, rejected_by = ?, admin_notes = ?, rejected_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """
+        conn.execute(query, (status, admin_username, admin_notes, proposal_id))
