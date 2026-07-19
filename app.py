@@ -6,7 +6,7 @@ import logging
 import os
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, session
 from werkzeug.middleware.proxy_fix import ProxyFix
 from flask_wtf import CSRFProtect
 from flask_wtf.csrf import CSRFError
@@ -143,8 +143,30 @@ def create_app(config_name: str = None):
     @app.errorhandler(CSRFError)
     def handle_csrf_error(e):
         logger.warning("CSRF error: %s from %s", sanitize_log(str(e.description)), sanitize_log(request.remote_addr))
-        if request.is_json:
+        # A session-bound CSRF token becomes invalid the moment the login session
+        # expires, so a CSRF failure with no logged-in user is really an expired
+        # session — surface it as 401 so the client can prompt re-login and preserve
+        # the in-progress assessment, instead of a misleading generic error (#195).
+        session_expired = "user" not in session
+        # The mapper submits form-encoded data via jQuery ($.post), so request.is_json
+        # is False; detect AJAX via X-Requested-With so these posts still get a JSON
+        # body the client can key on (rather than an HTML error page).
+        wants_json = (
+            request.is_json
+            or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        )
+        if wants_json:
+            if session_expired:
+                return jsonify({"error": "session_expired"}), 401
             return jsonify({"error": "CSRF token missing or invalid"}), 400
+        if session_expired:
+            return (
+                render_template(
+                    "error.html",
+                    error="Your session has expired. Please log in again.",
+                ),
+                401,
+            )
         return (
             render_template(
                 "error.html", error="Security token expired. Please refresh the page."

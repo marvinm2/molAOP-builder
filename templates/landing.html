@@ -63,7 +63,7 @@
           {% set entry = live_versions.get(key, {}) %}
           {% if entry.get('unavailable') %}
             <span class="version-badge version-badge--unavailable"
-                  title="Could not reach upstream source">{{ label }}: unavailable</span>
+                  title="Couldn't fetch the upstream {{ label }} release version. This badge tracks source-release metadata only — {{ label }} mapping, search and suggestions are unaffected.">{{ label }} version: unknown</span>
           {% elif entry.get('version') %}
             <span class="version-badge">{{ label }}: {{ entry.version }}</span>
           {% endif %}
