@@ -998,6 +998,319 @@ def reject_reactome_proposal(proposal_id: int):
         return jsonify({"error": "Failed to reject Reactome proposal"}), 500
 
 
+# ---------------------------------------------------------------------------
+# Bulk-approve routes (Phase 38 ADMIN-01/06)
+# ---------------------------------------------------------------------------
+
+
+@admin_bp.route("/proposals/bulk-approve", methods=["POST"])
+@admin_required
+@submission_rate_limit
+def bulk_approve_proposals():
+    """
+    Approve a batch of WP new-pair proposals in a single transaction.
+
+    Accepts a JSON body: {"ids": [int, ...], "admin_notes": "optional string"}.
+    Only new-pair proposals (mapping_id IS NULL, not proposed_delete) are
+    handled here; revision/delete proposals go through the single-approve
+    route.
+
+    Returns: {"approved": [mapping_uuid_str, ...], "failed": [{"id": int, "reason": str}, ...]}
+
+    Whole-batch rollback on any transaction error (H-1 invariant).
+    """
+    try:
+        if not request.is_json:
+            return jsonify({"error": "JSON body required"}), 400
+
+        admin_data = {"admin_notes": request.json.get("admin_notes", "")}
+
+        is_valid, validated_data, errors = validate_request_data(
+            AdminNotesSchema, admin_data
+        )
+        if not is_valid:
+            logger.warning("Invalid admin notes in WP bulk-approve: %s", errors)
+            return jsonify({"error": "Invalid input data", "details": errors}), 400
+
+        admin_notes = SecurityValidation.sanitize_string(
+            validated_data["admin_notes"], max_length=1000
+        )
+        admin_username = session.get("user", {}).get("username")
+
+        if not SecurityValidation.validate_username(admin_username):
+            logger.error(
+                "Invalid admin username in WP bulk-approve: %s",
+                sanitize_log(str(admin_username)),
+            )
+            return jsonify({"error": "Authentication error"}), 401
+
+        # Coerce and validate the ID list
+        raw_ids = request.json.get("ids", [])
+        failed = []
+        int_ids = []
+        for pid in raw_ids:
+            if not isinstance(pid, int):
+                failed.append({"id": pid, "reason": "invalid id"})
+            else:
+                int_ids.append(pid)
+
+        # PRE-FLIGHT: read-only checks; never enter the transaction for invalid IDs
+        valid_proposals = []
+        for pid in int_ids:
+            p = proposal_model.get_proposal_by_id(pid)
+            if not p:
+                failed.append({"id": pid, "reason": "not found"})
+            elif p["status"] != "pending":
+                failed.append({"id": pid, "reason": f"already {p['status']}"})
+            elif p.get("proposed_delete") or p.get("mapping_id") is not None:
+                # Bulk path only handles new-pair proposals
+                failed.append({"id": pid, "reason": "not a new-pair proposal"})
+            else:
+                valid_proposals.append((pid, p))
+
+        if not valid_proposals:
+            return jsonify({"approved": [], "failed": failed}), 200
+
+        # SINGLE TRANSACTION
+        wp_version_fields = _source_version_fields("wp")
+        conn = mapping_model.db.get_connection()
+        approved_uuids = []
+        try:
+            for pid, proposal in valid_proposals:
+                mapping_uuid = mapping_model._approve_on_conn(
+                    conn, proposal, admin_username, **wp_version_fields
+                )
+                proposal_model._update_status_on_conn(
+                    conn, pid, "approved", admin_username, admin_notes
+                )
+                approved_uuids.append(mapping_uuid)
+            conn.commit()
+        except Exception as exc:
+            conn.rollback()
+            logger.error("WP bulk-approve transaction failed: %s", exc)
+            failed.extend(
+                {"id": pid, "reason": "transaction failed"}
+                for pid, _ in valid_proposals
+            )
+            return jsonify({"approved": [], "failed": failed}), 500
+        finally:
+            conn.close()
+
+        # AUDIT (ADMIN-06)
+        logger.info(
+            "AUDIT bulk-approve wp: admin=%s approved=%s",
+            sanitize_log(admin_username), approved_uuids,
+        )
+
+        return jsonify({"approved": approved_uuids, "failed": failed}), 200
+
+    except Exception as e:
+        logger.error("Error in WP bulk-approve: %s", sanitize_log(str(e)))
+        return jsonify({"error": "Failed to bulk-approve WP proposals"}), 500
+
+
+@admin_bp.route("/go-proposals/bulk-approve", methods=["POST"])
+@admin_required
+@submission_rate_limit
+def bulk_approve_go_proposals():
+    """
+    Approve a batch of GO new-pair proposals in a single transaction.
+
+    Accepts a JSON body: {"ids": [int, ...], "admin_notes": "optional string"}.
+    Uses stored confidence fallback (no admin re-score widget), assessment_version="v1".
+
+    Returns: {"approved": [mapping_uuid_str, ...], "failed": [{"id": int, "reason": str}, ...]}
+
+    Whole-batch rollback on any transaction error (H-1 invariant).
+    """
+    try:
+        if not request.is_json:
+            return jsonify({"error": "JSON body required"}), 400
+
+        admin_data = {"admin_notes": request.json.get("admin_notes", "")}
+
+        is_valid, validated_data, errors = validate_request_data(
+            AdminNotesSchema, admin_data
+        )
+        if not is_valid:
+            logger.warning("Invalid admin notes in GO bulk-approve: %s", errors)
+            return jsonify({"error": "Invalid input data", "details": errors}), 400
+
+        admin_notes = SecurityValidation.sanitize_string(
+            validated_data["admin_notes"], max_length=1000
+        )
+        admin_username = session.get("user", {}).get("username")
+
+        if not SecurityValidation.validate_username(admin_username):
+            logger.error(
+                "Invalid admin username in GO bulk-approve: %s",
+                sanitize_log(str(admin_username)),
+            )
+            return jsonify({"error": "Authentication error"}), 401
+
+        # Coerce and validate the ID list
+        raw_ids = request.json.get("ids", [])
+        failed = []
+        int_ids = []
+        for pid in raw_ids:
+            if not isinstance(pid, int):
+                failed.append({"id": pid, "reason": "invalid id"})
+            else:
+                int_ids.append(pid)
+
+        # PRE-FLIGHT: read-only checks
+        valid_proposals = []
+        for pid in int_ids:
+            p = go_proposal_model.get_go_proposal_by_id(pid)
+            if not p:
+                failed.append({"id": pid, "reason": "not found"})
+            elif p["status"] != "pending":
+                failed.append({"id": pid, "reason": f"already {p['status']}"})
+            else:
+                valid_proposals.append((pid, p))
+
+        if not valid_proposals:
+            return jsonify({"approved": [], "failed": failed}), 200
+
+        # SINGLE TRANSACTION
+        go_version_fields = _source_version_fields("go")
+        conn = go_mapping_model.db.get_connection()
+        approved_uuids = []
+        try:
+            for pid, proposal in valid_proposals:
+                mapping_uuid = go_mapping_model._approve_on_conn(
+                    conn, proposal, admin_username, **go_version_fields
+                )
+                go_proposal_model._update_status_on_conn(
+                    conn, pid, "approved", admin_username, admin_notes
+                )
+                approved_uuids.append(mapping_uuid)
+            conn.commit()
+        except Exception as exc:
+            conn.rollback()
+            logger.error("GO bulk-approve transaction failed: %s", exc)
+            failed.extend(
+                {"id": pid, "reason": "transaction failed"}
+                for pid, _ in valid_proposals
+            )
+            return jsonify({"approved": [], "failed": failed}), 500
+        finally:
+            conn.close()
+
+        # AUDIT (ADMIN-06)
+        logger.info(
+            "AUDIT bulk-approve go: admin=%s approved=%s",
+            sanitize_log(admin_username), approved_uuids,
+        )
+
+        return jsonify({"approved": approved_uuids, "failed": failed}), 200
+
+    except Exception as e:
+        logger.error("Error in GO bulk-approve: %s", sanitize_log(str(e)))
+        return jsonify({"error": "Failed to bulk-approve GO proposals"}), 500
+
+
+@admin_bp.route("/reactome-proposals/bulk-approve", methods=["POST"])
+@admin_required
+@submission_rate_limit
+def bulk_approve_reactome_proposals():
+    """
+    Approve a batch of Reactome new-pair proposals in a single transaction.
+
+    Accepts a JSON body: {"ids": [int, ...], "admin_notes": "optional string"}.
+    Confidence is straight pass-through from proposal -> mapping (D-02).
+
+    Returns: {"approved": [mapping_uuid_str, ...], "failed": [{"id": int, "reason": str}, ...]}
+
+    Whole-batch rollback on any transaction error (H-1 invariant).
+    """
+    try:
+        if not request.is_json:
+            return jsonify({"error": "JSON body required"}), 400
+
+        admin_data = {"admin_notes": request.json.get("admin_notes", "")}
+
+        is_valid, validated_data, errors = validate_request_data(
+            AdminNotesSchema, admin_data
+        )
+        if not is_valid:
+            logger.warning("Invalid admin notes in Reactome bulk-approve: %s", errors)
+            return jsonify({"error": "Invalid input data", "details": errors}), 400
+
+        admin_notes = SecurityValidation.sanitize_string(
+            validated_data["admin_notes"], max_length=1000
+        )
+        admin_username = session.get("user", {}).get("username")
+
+        if not SecurityValidation.validate_username(admin_username):
+            logger.error(
+                "Invalid admin username in Reactome bulk-approve: %s",
+                sanitize_log(str(admin_username)),
+            )
+            return jsonify({"error": "Authentication error"}), 401
+
+        # Coerce and validate the ID list
+        raw_ids = request.json.get("ids", [])
+        failed = []
+        int_ids = []
+        for pid in raw_ids:
+            if not isinstance(pid, int):
+                failed.append({"id": pid, "reason": "invalid id"})
+            else:
+                int_ids.append(pid)
+
+        # PRE-FLIGHT: read-only checks
+        valid_proposals = []
+        for pid in int_ids:
+            p = reactome_proposal_model.get_proposal_by_id(pid)
+            if not p:
+                failed.append({"id": pid, "reason": "not found"})
+            elif p["status"] != "pending":
+                failed.append({"id": pid, "reason": f"already {p['status']}"})
+            else:
+                valid_proposals.append((pid, p))
+
+        if not valid_proposals:
+            return jsonify({"approved": [], "failed": failed}), 200
+
+        # SINGLE TRANSACTION
+        reactome_version_fields = _source_version_fields("reactome")
+        conn = reactome_mapping_model.db.get_connection()
+        approved_uuids = []
+        try:
+            for pid, _proposal in valid_proposals:
+                mapping_uuid = reactome_mapping_model._create_approved_on_conn(
+                    conn, pid, admin_username, **reactome_version_fields
+                )
+                reactome_proposal_model._update_status_on_conn(
+                    conn, pid, "approved", admin_username, admin_notes
+                )
+                approved_uuids.append(mapping_uuid)
+            conn.commit()
+        except Exception as exc:
+            conn.rollback()
+            logger.error("Reactome bulk-approve transaction failed: %s", exc)
+            failed.extend(
+                {"id": pid, "reason": "transaction failed"}
+                for pid, _ in valid_proposals
+            )
+            return jsonify({"approved": [], "failed": failed}), 500
+        finally:
+            conn.close()
+
+        # AUDIT (ADMIN-06)
+        logger.info(
+            "AUDIT bulk-approve reactome: admin=%s approved=%s",
+            sanitize_log(admin_username), approved_uuids,
+        )
+
+        return jsonify({"approved": approved_uuids, "failed": failed}), 200
+
+    except Exception as e:
+        logger.error("Error in Reactome bulk-approve: %s", sanitize_log(str(e)))
+        return jsonify({"error": "Failed to bulk-approve Reactome proposals"}), 500
+
+
 @admin_bp.route("/guest-codes")
 @admin_required
 @monitor_performance

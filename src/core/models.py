@@ -2199,6 +2199,120 @@ class MappingModel:
         finally:
             conn.close()
 
+    def _approve_on_conn(
+        self,
+        conn,
+        proposal: dict,
+        approved_by_curator: str,
+        approved_at_curator: str = None,
+        # Phase C — source-data versioning kwargs; nullable, stamped from manifest.
+        wp_release_date: Optional[str] = None,
+        aopwiki_snapshot_date: Optional[str] = None,
+    ) -> str:
+        """Approve a WP new-pair proposal on a caller-managed connection.
+
+        Executes the create_mapping INSERT followed by the update_mapping provenance
+        UPDATE, both on `conn`, without calling conn.commit() or conn.close().
+        Returns the new mapping UUID string for the audit log.
+
+        Only handles new-pair proposals (proposal["mapping_id"] is None and not
+        proposal["proposed_delete"]). Raises on IntegrityError or any DB error so
+        the bulk-approve caller's outer try/except can roll back the entire batch.
+
+        Phase 38 (ADMIN-02): caller-managed transaction helper for bulk-approve.
+        """
+        if approved_at_curator is None:
+            approved_at_curator = datetime.utcnow().isoformat()
+
+        mapping_uuid = str(uuid_lib.uuid4())
+
+        proposed_relationship = proposal.get("proposed_relationship")
+        proposed_basis = proposal.get("proposed_basis")
+        proposed_specificity = proposal.get("proposed_specificity")
+        proposed_coverage = proposal.get("proposed_coverage")
+
+        effective_connection_type = (
+            proposed_relationship if proposed_relationship is not None
+            else (proposal.get("new_pair_connection_type") or proposal.get("proposed_connection_type"))
+        )
+        assessment_version = _classify_assessment_version(
+            proposed_relationship, proposed_basis, proposed_specificity, proposed_coverage
+        )
+
+        cursor = conn.execute(
+            """
+            INSERT INTO mappings (ke_id, ke_title, wp_id, wp_title, connection_type,
+                                  confidence_level, created_by, uuid,
+                                  proposed_relationship, proposed_basis,
+                                  proposed_specificity, proposed_coverage,
+                                  assessment_version,
+                                  wp_release_date, aopwiki_snapshot_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+            (
+                proposal["ke_id"],
+                proposal["ke_title"],
+                proposal["wp_id"],
+                proposal["wp_title"],
+                effective_connection_type,
+                proposal.get("new_pair_confidence_level") or proposal.get("proposed_confidence"),
+                proposal.get("provider_username") or approved_by_curator,
+                mapping_uuid,
+                proposed_relationship,
+                proposed_basis,
+                proposed_specificity,
+                proposed_coverage,
+                assessment_version,
+                wp_release_date,
+                aopwiki_snapshot_date,
+            ),
+        )
+        new_mapping_id = cursor.lastrowid
+
+        # Write provenance (approved_by, approved_at, suggestion_score, proposed_by)
+        update_clauses = [
+            "approved_by_curator = ?",
+            "approved_at_curator = ?",
+            "proposed_by = ?",
+            "updated_at = CURRENT_TIMESTAMP",
+        ]
+        params = [
+            approved_by_curator,
+            approved_at_curator,
+            proposal.get("provider_username"),
+        ]
+        proposal_score = proposal.get("suggestion_score")
+        if proposal_score is not None:
+            update_clauses.append("suggestion_score = ?")
+            params.append(proposal_score)
+        # Re-thread assessment for defense-in-depth on the update path
+        if proposed_relationship is not None:
+            update_clauses.append("proposed_relationship = ?")
+            params.append(proposed_relationship)
+        if proposed_basis is not None:
+            update_clauses.append("proposed_basis = ?")
+            params.append(proposed_basis)
+        if proposed_specificity is not None:
+            update_clauses.append("proposed_specificity = ?")
+            params.append(proposed_specificity)
+        if proposed_coverage is not None:
+            update_clauses.append("proposed_coverage = ?")
+            params.append(proposed_coverage)
+        if assessment_version is not None:
+            update_clauses.append("assessment_version = ?")
+            params.append(assessment_version)
+
+        params.append(new_mapping_id)
+        conn.execute(
+            f"UPDATE mappings SET {', '.join(update_clauses)} WHERE id = ?",
+            params,
+        )
+        logger.info(
+            "WP _approve_on_conn: KE=%s, WP=%s, UUID=%s (caller-managed tx)",
+            proposal["ke_id"], proposal["wp_id"], mapping_uuid,
+        )
+        return mapping_uuid
+
     def get_mapping_by_uuid(self, mapping_uuid: str) -> Optional[Dict]:
         """Get a mapping by its stable UUID"""
         conn = self.db.get_connection()
@@ -2552,6 +2666,38 @@ class ProposalModel:
             return False
         finally:
             conn.close()
+
+    def _update_status_on_conn(
+        self,
+        conn,
+        proposal_id: int,
+        status: str,
+        admin_username: str,
+        admin_notes: str,
+    ) -> None:
+        """Update WP proposal status on a caller-managed connection.
+
+        Raises ValueError for invalid status. Executes the UPDATE on `conn`
+        without calling conn.commit() or conn.close(). Any DB error propagates
+        to the caller for rollback.
+
+        Phase 38 (ADMIN-02): caller-managed transaction helper for bulk-approve.
+        """
+        if status not in ["approved", "rejected"]:
+            raise ValueError(f"Invalid status: {status}")
+        if status == "approved":
+            query = """
+                UPDATE proposals
+                SET status = ?, approved_by = ?, admin_notes = ?, approved_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """
+        else:
+            query = """
+                UPDATE proposals
+                SET status = ?, rejected_by = ?, admin_notes = ?, rejected_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """
+        conn.execute(query, (status, admin_username, admin_notes, proposal_id))
 
     def flag_proposal_stale(self, proposal_id: int, flagged_by: str) -> bool:
         """
@@ -3006,6 +3152,107 @@ class GoMappingModel:
         finally:
             conn.close()
 
+    def _approve_on_conn(
+        self,
+        conn,
+        proposal: dict,
+        approved_by_curator: str,
+        approved_at_curator: str = None,
+        # Phase C — source-data versioning kwargs; nullable, stamped from manifest.
+        go_release_date: Optional[str] = None,
+        aopwiki_snapshot_date: Optional[str] = None,
+    ) -> str:
+        """Approve a GO new-pair proposal on a caller-managed connection.
+
+        Uses the proposal's stored new_pair_confidence_level / proposed_confidence
+        directly (skips admin re-score widget per D-15/Pitfall 4). assessment_version
+        is always "v1" for the bulk path.
+
+        Executes the create_mapping INSERT and then the update_go_mapping provenance
+        UPDATE both on `conn` without calling conn.commit() or conn.close(). Returns
+        the new mapping UUID string for the audit log. Raises on IntegrityError or
+        any DB error so the bulk caller's outer try/except can roll back the batch.
+
+        Phase 38 (ADMIN-02): caller-managed transaction helper for bulk-approve.
+        """
+        if approved_at_curator is None:
+            approved_at_curator = datetime.utcnow().isoformat()
+
+        mapping_uuid = str(uuid_lib.uuid4())
+
+        # D-15/Pitfall 4: use stored confidence fallback; do NOT read dimension scores.
+        confidence_level = (
+            proposal.get("new_pair_confidence_level")
+            or proposal.get("proposed_confidence")
+        )
+        # Bulk path always uses v1 (no admin re-score widget)
+        assessment_version = "v1"
+
+        go_name = proposal.get("go_name", "")
+        go_direction = None
+        if go_name:
+            detected = detect_go_direction(go_name)
+            go_direction = detected if detected != "unspecified" else None
+
+        cursor = conn.execute(
+            """
+            INSERT INTO ke_go_mappings (ke_id, ke_title, go_id, go_name, connection_type,
+                                       confidence_level, evidence_code, created_by, uuid,
+                                       go_direction, connection_score, specificity_score,
+                                       evidence_score, assessment_version, go_namespace,
+                                       go_release_date, aopwiki_snapshot_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+            (
+                proposal["ke_id"],
+                proposal["ke_title"],
+                proposal["go_id"],
+                go_name,
+                proposal.get("new_pair_connection_type") or proposal.get("proposed_connection_type"),
+                confidence_level,
+                None,   # evidence_code not carried for bulk path
+                proposal.get("provider_username") or approved_by_curator,
+                mapping_uuid,
+                go_direction,
+                None,   # connection_score — bulk skips admin re-score (D-15)
+                None,   # specificity_score
+                None,   # evidence_score
+                assessment_version,
+                proposal.get("go_namespace", "biological_process"),
+                go_release_date,
+                aopwiki_snapshot_date,
+            ),
+        )
+        new_mapping_id = cursor.lastrowid
+
+        # Write provenance (approved_by, approved_at, suggestion_score, proposed_by)
+        update_clauses = [
+            "approved_by_curator = ?",
+            "approved_at_curator = ?",
+            "proposed_by = ?",
+            "updated_at = CURRENT_TIMESTAMP",
+        ]
+        params = [
+            approved_by_curator,
+            approved_at_curator,
+            proposal.get("provider_username"),
+        ]
+        proposal_score = proposal.get("suggestion_score")
+        if proposal_score is not None:
+            update_clauses.append("suggestion_score = ?")
+            params.append(proposal_score)
+
+        params.append(new_mapping_id)
+        conn.execute(
+            f"UPDATE ke_go_mappings SET {', '.join(update_clauses)} WHERE id = ?",
+            params,
+        )
+        logger.info(
+            "GO _approve_on_conn: KE=%s, GO=%s, UUID=%s (caller-managed tx)",
+            proposal["ke_id"], proposal["go_id"], mapping_uuid,
+        )
+        return mapping_uuid
+
     def get_go_mappings_paginated(
         self,
         page: int = 1,
@@ -3300,6 +3547,38 @@ class GoProposalModel:
             return False
         finally:
             conn.close()
+
+    def _update_status_on_conn(
+        self,
+        conn,
+        proposal_id: int,
+        status: str,
+        admin_username: str,
+        admin_notes: str,
+    ) -> None:
+        """Update GO proposal status on a caller-managed connection.
+
+        Raises ValueError for invalid status. Executes the UPDATE on `conn`
+        without calling conn.commit() or conn.close(). Any DB error propagates
+        to the caller for rollback.
+
+        Phase 38 (ADMIN-02): caller-managed transaction helper for bulk-approve.
+        """
+        if status not in ["approved", "rejected"]:
+            raise ValueError(f"Invalid status: {status}")
+        if status == "approved":
+            query = """
+                UPDATE ke_go_proposals
+                SET status = ?, approved_by = ?, admin_notes = ?, approved_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """
+        else:
+            query = """
+                UPDATE ke_go_proposals
+                SET status = ?, rejected_by = ?, admin_notes = ?, rejected_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """
+        conn.execute(query, (status, admin_username, admin_notes, proposal_id))
 
     def flag_go_proposal_stale(self, proposal_id: int, flagged_by: str) -> bool:
         """
@@ -3891,6 +4170,104 @@ class ReactomeMappingModel:
             return None
         finally:
             conn.close()
+
+    def _create_approved_on_conn(
+        self,
+        conn,
+        proposal_id: int,
+        approved_by_curator: str,
+        approved_at_curator: str = None,
+        # Phase C — source-data versioning kwargs; nullable, stamped from manifest.
+        reactome_release_version: Optional[str] = None,
+        reactome_release_date: Optional[str] = None,
+        aopwiki_snapshot_date: Optional[str] = None,
+    ) -> str:
+        """Single-INSERT approved Reactome mapping on a caller-managed connection.
+
+        Body is identical to create_approved_mapping (REACTOME_PROPOSAL_CARRY_FIELDS-
+        driven INSERT, new_pair_confidence_level alias map, _classify_assessment_version
+        call) minus conn management. Returns the new mapping UUID string for the audit
+        log. Raises on IntegrityError or any DB error — caller is responsible for
+        rollback; no conn.commit() or conn.close() is called.
+
+        Phase 38 (ADMIN-02): caller-managed transaction helper for bulk-approve.
+        """
+        if approved_at_curator is None:
+            approved_at_curator = datetime.utcnow().isoformat()
+
+        mapping_uuid = str(uuid_lib.uuid4())
+
+        # Load the proposal row — all carry-field values live here.
+        proposal_row = conn.execute(
+            "SELECT * FROM ke_reactome_proposals WHERE id = ?",
+            (proposal_id,),
+        ).fetchone()
+        if proposal_row is None:
+            raise ValueError(
+                f"_create_approved_on_conn: proposal {proposal_id} not found"
+            )
+        proposal_row = dict(proposal_row)
+
+        # Phase 34 (ASMT-10): carry-field column list is constant-driven.
+        # Column name alias: ke_reactome_proposals stores confidence as
+        # 'new_pair_confidence_level' while the mapping table expects 'confidence_level'.
+        _proposal_col_alias = {
+            'confidence_level': (
+                proposal_row.get("new_pair_confidence_level")
+                or proposal_row.get("proposed_confidence")
+                or proposal_row.get("confidence_level")
+            ),
+        }
+        carry_cols = list(REACTOME_PROPOSAL_CARRY_FIELDS)
+        carry_values = tuple(
+            _proposal_col_alias[col] if col in _proposal_col_alias
+            else proposal_row.get(col)
+            for col in carry_cols
+        )
+
+        ke_id = proposal_row.get("ke_id")
+        ke_title = proposal_row.get("ke_title")
+        reactome_id = proposal_row.get("reactome_id")
+        proposed_by = proposal_row.get("provider_username")
+
+        assessment_version = _classify_assessment_version(
+            proposal_row.get("proposed_relationship"),
+            proposal_row.get("proposed_basis"),
+            proposal_row.get("proposed_specificity"),
+            proposal_row.get("proposed_coverage"),
+        )
+
+        fixed_cols = (
+            'ke_id', 'ke_title', 'reactome_id',
+            'created_by', 'uuid',
+            'approved_by_curator', 'approved_at_curator', 'proposed_by',
+            'assessment_version',
+            'reactome_release_version', 'reactome_release_date',
+            'aopwiki_snapshot_date',
+        )
+        fixed_values = (
+            ke_id, ke_title, reactome_id,
+            proposed_by or approved_by_curator,
+            mapping_uuid,
+            approved_by_curator, approved_at_curator, proposed_by,
+            assessment_version,
+            reactome_release_version, reactome_release_date,
+            aopwiki_snapshot_date,
+        )
+
+        all_cols = fixed_cols + tuple(carry_cols)
+        placeholders = ', '.join('?' for _ in all_cols)
+        conn.execute(
+            f"INSERT INTO ke_reactome_mappings ({', '.join(all_cols)}) "
+            f"VALUES ({placeholders})",
+            fixed_values + carry_values,
+        )
+        logger.info(
+            "Reactome _create_approved_on_conn: KE=%s, Reactome=%s, "
+            "approved_by=%s, UUID=%s (caller-managed tx)",
+            ke_id, reactome_id, approved_by_curator, mapping_uuid,
+        )
+        return mapping_uuid
 
     def delete_mapping(self, mapping_id: int) -> bool:
         """Delete a mapping row by id. Used to roll back on partial failure
@@ -4563,3 +4940,35 @@ class ReactomeProposalModel:
             return False
         finally:
             conn.close()
+
+    def _update_status_on_conn(
+        self,
+        conn,
+        proposal_id: int,
+        status: str,
+        admin_username: str,
+        admin_notes: str,
+    ) -> None:
+        """Update Reactome proposal status on a caller-managed connection.
+
+        Raises ValueError for invalid status. Executes the UPDATE on `conn`
+        without calling conn.commit() or conn.close(). Any DB error propagates
+        to the caller for rollback.
+
+        Phase 38 (ADMIN-02): caller-managed transaction helper for bulk-approve.
+        """
+        if status not in ["approved", "rejected"]:
+            raise ValueError(f"Invalid status: {status}")
+        if status == "approved":
+            query = """
+                UPDATE ke_reactome_proposals
+                SET status = ?, approved_by = ?, admin_notes = ?, approved_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """
+        else:
+            query = """
+                UPDATE ke_reactome_proposals
+                SET status = ?, rejected_by = ?, admin_notes = ?, rejected_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """
+        conn.execute(query, (status, admin_username, admin_notes, proposal_id))

@@ -1274,7 +1274,12 @@ class KEWPApp {
                     console.log('Status:', xhr.status, 'Response:', xhr.responseText);
                     
                     if (xhr.status === 401 || xhr.status === 403) {
-                        this.showMessage("Please log in to submit mappings.", "error");
+                        const expired = xhr.responseJSON?.error === "session_expired";
+                        this.showMessage(
+                            expired
+                                ? "Your session has expired — please log in again. Your assessment has been saved."
+                                : "Please log in to submit mappings.",
+                            "error");
                         setTimeout(() => {
                             this.saveFormState();
                             window.location.href = '/auth/login';
@@ -4665,7 +4670,12 @@ This helps identify gaps in existing pathways for future development.">❓</span
             })
             .fail((xhr) => {
                 if (xhr.status === 401 || xhr.status === 403) {
-                    this.showGoMessage("Please log in to submit mappings.", "error");
+                    const expired = xhr.responseJSON?.error === "session_expired";
+                    this.showGoMessage(
+                        expired
+                            ? "Your session has expired — please log in again, then resubmit."
+                            : "Please log in to submit mappings.",
+                        "error");
                     setTimeout(() => {
                         this.saveFormState();
                         window.location.href = '/auth/login';
@@ -4706,6 +4716,52 @@ This helps identify gaps in existing pathways for future development.">❓</span
                 <div>
                     <strong class="text-dark-heading">Confidence:</strong><br>
                     <span class="text-muted">${formData.confidence_level.charAt(0).toUpperCase() + formData.confidence_level.slice(1)}</span>
+                </div>
+            </div>
+        `;
+
+        $("#submissionSummary").html(summaryHtml);
+        const modal = $("#thankYouModal");
+        modal.css("display", "flex");
+
+        $("#closeThankYouModal").off("click").on("click", () => modal.hide());
+        modal.off("click").on("click", (e) => {
+            if (e.target.id === "thankYouModal") modal.hide();
+        });
+        setTimeout(() => modal.fadeOut(), 10000);
+    }
+
+    showReactomeSuccessMessage(payload) {
+        // Bind the Thank-You modal to the just-submitted Reactome record.
+        // Mirrors showGoSuccessMessage; Reactome has no namespace badge, and
+        // its connection type (relationship from step1) is only shown when present.
+        const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : "—");
+        const connectionBlock = payload.connection_type
+            ? `<div>
+                    <strong class="text-dark-heading">Connection:</strong><br>
+                    <span class="text-muted">${cap(payload.connection_type)}</span>
+                </div>`
+            : "";
+
+        const summaryHtml = `
+            <div style="margin-bottom: 15px;">
+                <div style="margin-bottom: 10px;">
+                    <strong class="text-dark-heading">Key Event:</strong><br>
+                    <span class="text-muted" style="font-family: monospace; font-size: 13px;">${payload.ke_id}</span><br>
+                    <span style="font-size: 14px;">${payload.ke_title}</span>
+                </div>
+                <div style="text-align: center; margin: 10px 0; font-size: 20px;" class="text-link-blue">&#8595;</div>
+                <div style="margin-bottom: 10px;">
+                    <strong class="text-dark-heading">Reactome Pathway:</strong><br>
+                    <span class="text-muted" style="font-family: monospace; font-size: 13px;">${payload.reactome_id}</span><br>
+                    <span style="font-size: 14px;">${payload.pathway_name}</span>
+                </div>
+            </div>
+            <div style="border-top: 1px solid var(--color-border-light); padding-top: 15px; display: flex; justify-content: space-around; font-size: 14px;">
+                ${connectionBlock}
+                <div>
+                    <strong class="text-dark-heading">Confidence:</strong><br>
+                    <span class="text-muted">${cap(payload.confidence_level)}</span>
                 </div>
             </div>
         `;
@@ -5224,13 +5280,18 @@ This helps identify gaps in existing pathways for future development.">❓</span
 
         $.post('/submit_reactome_mapping', payload)
             .done(() => {
-                $('#thankYouModal').css('display', 'flex');
-                $('#closeThankYouModal').off('click').on('click', () => $('#thankYouModal').hide());
+                // Populate + show the success modal from the captured payload
+                // BEFORE resetReactomeTab() nulls selectedReactomePathway (#194).
+                this.showReactomeSuccessMessage(payload);
                 this.resetReactomeTab();
             })
             .fail((xhr) => {
                 if (xhr && (xhr.status === 401 || xhr.status === 403)) {
-                    $('#reactome-message').text('Please log in to submit mappings.')
+                    const expired = xhr.responseJSON && xhr.responseJSON.error === 'session_expired';
+                    $('#reactome-message').text(
+                        expired
+                            ? 'Your session has expired — please log in again, then resubmit.'
+                            : 'Please log in to submit mappings.')
                         .css('color', 'var(--color-status-low)');
                     setTimeout(() => {
                         this.saveFormState();

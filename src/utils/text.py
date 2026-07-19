@@ -196,6 +196,38 @@ def detect_go_direction(go_name: str) -> str:
     return "unspecified"
 
 
+# Directional / signed GO-label operators. A KE's direction belongs in its PATO
+# Action slot, not in the GO Process term, so signed terms must never be suggested
+# or searched for a KE (#193). Patterns mirror the amigo-ke-go-mapping skill's
+# directionality lexicon and the corpus-build filter in precompute_go_hierarchy.py
+# (keep the two in sync). Neutral "regulation of X", bare "X activation" (e.g.
+# "T cell activation"), and "... activity" MF terms are deliberately NOT matched.
+_DIRECTIONAL_GO_LABEL_RE = re.compile(
+    "|".join([
+        r"\bpositive regulation of\b",
+        r"\bnegative regulation of\b",
+        r"\bactivation of\b",
+        r"\binhibition of\b",
+        r"\binduction of\b",
+        r"\brepression of\b",
+        r"\bsuppression of\b",
+        r"\bstimulation of\b",
+        r"\bup[- ]?regulation\b",
+        r"\bdown[- ]?regulation\b",
+        r"\bincreased?\b",
+        r"\bdecreased?\b",
+        r"\bactivated\b",
+        r"\binhibited\b",
+    ]),
+    re.IGNORECASE,
+)
+
+
+def is_directional_go_label(go_name: str) -> bool:
+    """True if a GO label encodes a sign/direction (excluded from suggestions)."""
+    return bool(go_name and _DIRECTIONAL_GO_LABEL_RE.search(go_name))
+
+
 def detect_ke_direction(ke_title: str) -> str:
     """
     Detect the direction of a KE from its title via regex pattern matching.

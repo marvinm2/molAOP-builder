@@ -16,7 +16,12 @@ from src.core.config_loader import ConfigLoader
 from src.suggestions.ke_genes import get_genes_from_ke
 from src.suggestions.scoring import combine_scored_items
 from src.utils.description_toggle import resolve_description_usage
-from src.utils.text import remove_directionality_terms, detect_ke_direction, detect_go_direction
+from src.utils.text import (
+    remove_directionality_terms,
+    detect_ke_direction,
+    detect_go_direction,
+    is_directional_go_label,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -233,19 +238,35 @@ class GoSuggestionService:
         suggestions.sort(key=lambda x: x['hybrid_score'], reverse=True)
         return suggestions
 
-    def _filter_redundant_ancestors(self, suggestions, ns_data: _NamespaceData):
+    def _filter_redundant_ancestors(self, suggestions, ns_data: _NamespaceData, ke_title: str = ""):
         """Remove ancestor GO terms when a more specific descendant is present.
 
         An ancestor is removed unless its hybrid_score exceeds the child's score
         by more than redundancy_threshold (default 20%).
+
+        Exception: an ancestor whose label exactly matches the (direction-stripped)
+        KE title is never pruned. For a generic KE ("Cell death"), the umbrella term
+        IS the intended annotation, so a fractionally-higher-scoring descendant
+        ("programmed cell death") must not evict it (#193).
         """
         go_cfg = ns_data.config
         hierarchy_cfg = getattr(go_cfg, 'hierarchy', {}) if go_cfg else {}
         threshold = hierarchy_cfg.get('redundancy_threshold', 0.20) if isinstance(hierarchy_cfg, dict) else 0.20
 
-        # Build lookup of suggestion go_ids to their scores
+        # Build lookup of suggestion go_ids to their scores + names
         suggestion_ids = {s['go_id'] for s in suggestions}
         score_map = {s['go_id']: s['hybrid_score'] for s in suggestions}
+        name_map = {s['go_id']: s.get('go_name', '') for s in suggestions}
+
+        # Terms whose label matches the KE title (exact or whole-word phrase) are
+        # protected from pruning — for a generic KE the umbrella term is the answer,
+        # so a more-specific descendant must not evict it.
+        ke_clean = self._clean_text(remove_directionality_terms(ke_title)) if ke_title else ""
+        protected = (
+            {gid for gid, nm in name_map.items()
+             if self._title_match_kind(ke_clean, self._clean_text(nm))}
+            if ke_clean else set()
+        )
 
         # Collect ancestors to remove
         ancestors_to_remove = set()
@@ -256,6 +277,9 @@ class GoSuggestionService:
 
             for anc_id in ancestors:
                 if anc_id not in suggestion_ids:
+                    continue
+                if anc_id in protected:
+                    # exact KE-title match — never redundant
                     continue
                 # anc_id is an ancestor of go_id and both are in suggestions
                 child_score = score_map[go_id]
@@ -269,6 +293,69 @@ class GoSuggestionService:
             logger.info("Removing %d redundant ancestor GO terms", len(ancestors_to_remove))
 
         return [s for s in suggestions if s['go_id'] not in ancestors_to_remove]
+
+    # Title-match / proxy weighting constants (multiplicative, applied to hybrid_score).
+    # Consistent with the existing directionality match_boost/mismatch_penalty style.
+    _TITLE_EXACT_BOOST = 1.25    # GO label == KE title (direction-stripped)
+    _TITLE_NEAR_BOOST = 1.10     # KE title is a whole-word phrase of the label (or vice-versa)
+    _REGULATION_PROXY_PENALTY = 0.90  # "regulation of X" — the control layer, not the event
+    # Neutral "regulation of X" only. Signed variants are already excluded from the
+    # corpus/suggestions. "response to X" is deliberately NOT penalised — it is the
+    # canonical process term for stress/stimulus KEs (e.g. response to oxidative stress).
+    _REGULATION_PROXY_RE = re.compile(r"^regulation of\b", re.IGNORECASE)
+
+    @staticmethod
+    def _title_match_kind(ke_clean: str, name_clean: str):
+        """Return 'exact', 'near', or None for a cleaned label vs a cleaned KE title.
+
+        'near' = the KE title is a whole-word phrase of the label, or vice-versa
+        (e.g. KE "DNA damage" ~ "DNA damage response").
+        """
+        if not ke_clean or not name_clean:
+            return None
+        if name_clean == ke_clean:
+            return 'exact'
+        if f" {ke_clean} " in f" {name_clean} " or f" {name_clean} " in f" {ke_clean} ":
+            return 'near'
+        return None
+
+    def _apply_title_and_proxy_weighting(self, suggestions, ke_title: str):
+        """Boost KE-title-matching terms; down-rank 'regulation of X' proxies.
+
+        For a generic KE ("Cell death", "Apoptotic process"), the generic process
+        term is the intended annotation, but BioBERT similarity tends to float
+        specific children and "regulation of X" proxies above it. This stage:
+          - multiplies a term's hybrid_score by _TITLE_EXACT_BOOST when its label
+            exactly matches the direction-stripped KE title, _TITLE_NEAR_BOOST when
+            the title is a whole-word phrase of the label (or vice-versa);
+          - multiplies "regulation of X" labels by _REGULATION_PROXY_PENALTY.
+        Boost and penalty compose (a "regulation of <title>" term gets both).
+        """
+        if not ke_title:
+            return suggestions
+        ke_clean = self._clean_text(remove_directionality_terms(ke_title))
+        if not ke_clean:
+            return suggestions
+
+        for s in suggestions:
+            name = s.get('go_name', '')
+            name_clean = self._clean_text(name)
+            factor = 1.0
+            kind = self._title_match_kind(ke_clean, name_clean)
+            if kind == 'exact':
+                factor *= self._TITLE_EXACT_BOOST
+                s['title_match'] = 'exact'
+            elif kind == 'near':
+                factor *= self._TITLE_NEAR_BOOST
+                s['title_match'] = 'near'
+            if self._REGULATION_PROXY_RE.match(name):
+                factor *= self._REGULATION_PROXY_PENALTY
+                s['regulation_proxy'] = True
+            if factor != 1.0:
+                s['hybrid_score'] = s.get('hybrid_score', 0.0) * factor
+
+        suggestions.sort(key=lambda x: x['hybrid_score'], reverse=True)
+        return suggestions
 
     def _apply_direction_adjustment(self, suggestions, ke_title, ns_data: _NamespaceData):
         """Apply direction-based score boost or penalty to GO suggestions.
@@ -390,10 +477,23 @@ class GoSuggestionService:
             hierarchy_cfg = getattr(go_cfg, 'hierarchy', {}) if go_cfg else {}
             if isinstance(hierarchy_cfg, dict) and hierarchy_cfg.get('enabled', True):
                 combined = self._apply_ic_boost(combined, ns_data)
-                combined = self._filter_redundant_ancestors(combined, ns_data)
+                combined = self._filter_redundant_ancestors(combined, ns_data, ke_title)
 
         # Apply direction-based score adjustments (boost/penalty)
         combined = self._apply_direction_adjustment(combined, ke_title, ns_data)
+
+        # Surface the generic process term for generic KEs: boost terms whose label
+        # matches the KE title and down-rank "regulation of X" control-layer proxies
+        # so the process itself outranks its regulation (#193, KE->GO skill Rule 5).
+        combined = self._apply_title_and_proxy_weighting(combined, ke_title)
+
+        # Never suggest signed/directional GO terms — direction belongs in the KE's
+        # PATO Action slot, not the GO Process term (#193). This runtime guard holds
+        # even before the corpus is rebuilt to exclude them at the source.
+        combined = [
+            s for s in combined
+            if not is_directional_go_label(s.get('go_name', ''))
+        ]
 
         return combined
 
@@ -480,8 +580,24 @@ class GoSuggestionService:
             go_name = metadata.get('name', '')
             go_definition = metadata.get('definition', '')
 
+            # Signed/directional terms are never valid KE Process terms (#193).
+            if is_directional_go_label(go_name):
+                continue
+
             name_clean = self._clean_text(go_name)
             name_similarity = SequenceMatcher(None, query_clean, name_clean).ratio()
+
+            # Exact/whole-word/substring boost so an exact label match wins over a
+            # fuzzy near-miss (e.g. "cell death" must beat "cell growth"), with the
+            # fuzzy ratio kept only as a tiebreaker. Mirrors the Reactome search
+            # substring boost, extended with exact + whole-word tiers (#193).
+            if name_clean:
+                if query_clean == name_clean:
+                    name_similarity = 1.0
+                elif f" {query_clean} " in f" {name_clean} ":
+                    name_similarity = max(name_similarity, 0.92)
+                elif query_clean in name_clean:
+                    name_similarity = max(name_similarity, 0.85)
 
             def_similarity = 0.0
             if go_definition:

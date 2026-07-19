@@ -47,416 +47,140 @@
 
         <div class="existing-entries-container">
             <h2>KE-GO Proposal Dashboard</h2>
-            <p>Review and approve or reject KE-GO mapping proposals submitted by curators.</p>
+            <p>Review and approve or reject KE-GO mapping proposals submitted by curators. Use <kbd>a</kbd>/<kbd>r</kbd> to approve/reject, <kbd>↑</kbd>/<kbd>↓</kbd> to navigate, <kbd>?</kbd> for shortcuts.</p>
 
-            <table id="goProposalsTable" class="display" style="width:100%">
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>KE &rarr; GO Pair</th>
-                        <th>Proposed Values</th>
-                        <th>Submitted By</th>
-                        <th>Score</th>
-                        <th>Status</th>
-                        <th>Submitted</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for proposal in proposals %}
-                    <tr>
-                        <td>{{ proposal.id }}</td>
-                        <td>
-                            <strong>{{ proposal.ke_id }}</strong> &rarr; <strong>{{ proposal.go_id }}</strong><br>
-                            <div class="proposal-detail">
-                                {{ proposal.ke_title }}<br>
-                                &rarr; {{ proposal.go_name }}
-                            </div>
-                        </td>
-                        <td>
-                            <div>Connection: <strong>{{ proposal.new_pair_connection_type or proposal.proposed_connection_type }}</strong></div>
-                            <div>Confidence: <strong>{{ proposal.new_pair_confidence_level or proposal.proposed_confidence }}</strong></div>
-                        </td>
-                        <td>
-                            <div><strong>{{ proposal.github_username or proposal.user_name }}</strong></div>
-                        </td>
-                        <td>{{ "%.3f"|format(proposal.suggestion_score) if proposal.suggestion_score else '&mdash;' }}</td>
-                        <td>
-                            <span class="status-{{ proposal.status }}">{{ proposal.status|title }}</span>
-                            {% if proposal.admin_notes %}
-                                <div class="proposal-detail">{{ proposal.admin_notes }}</div>
-                            {% endif %}
-                        </td>
-                        <td>{{ proposal.created_at_formatted if proposal.created_at_formatted else 'Unknown' }}</td>
-                        <td>
-                            <div class="proposal-actions">
-                                {% if proposal.status == 'pending' %}
-                                    <button class="btn-approve" onclick="approveGoProposal({{ proposal.id }})">Approve</button>
-                                    <button class="btn-reject" onclick="rejectGoProposal({{ proposal.id }})">Reject</button>
-                                {% endif %}
-                                <button class="btn-view" onclick="viewGoProposal({{ proposal.id }})">Details</button>
-                            </div>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+            <!-- Two-column layout: table left, side panel right -->
+            <div style="display: grid; grid-template-columns: 1fr 380px; gap: 20px; align-items: start;">
+                <!-- LEFT: bulk action bar + table -->
+                <div>
+                    <div id="bulkActionBar" style="margin-bottom: 12px; display: none;">
+                        <button id="bulkApproveBtn" class="btn-approve" disabled>
+                            Approve selected (<span id="selectedCount">0</span>)
+                        </button>
+                    </div>
+
+                    <table id="goProposalsTable" class="display" style="width:100%">
+                        <thead>
+                            <tr>
+                                <th><input type="checkbox" id="selectAll" title="Select all pending"></th>
+                                <th>ID</th>
+                                <th>KE &rarr; GO Pair</th>
+                                <th>Proposed Values</th>
+                                <th>Submitted By</th>
+                                <th>Score</th>
+                                <th>Status</th>
+                                <th>Submitted</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for proposal in proposals %}
+                            <tr data-proposal-id="{{ proposal.id }}"
+                                data-status="{{ proposal.status|e }}"
+                                data-ke-id="{{ proposal.ke_id|e }}"
+                                data-ke-title="{{ proposal.ke_title|e }}"
+                                data-pathway-id="{{ proposal.go_id|e }}"
+                                data-pathway-title="{{ proposal.go_name|e }}"
+                                data-confidence="{{ (proposal.new_pair_confidence_level or proposal.proposed_confidence)|e }}"
+                                data-connection-type="{{ (proposal.new_pair_connection_type or proposal.proposed_connection_type)|e }}"
+                                data-proposed-relationship="{{ proposal.proposed_relationship|e if proposal.proposed_relationship else '' }}"
+                                data-proposed-basis="{{ proposal.proposed_basis|e if proposal.proposed_basis else '' }}"
+                                data-proposed-specificity="{{ proposal.proposed_specificity|e if proposal.proposed_specificity else '' }}"
+                                data-proposed-coverage="{{ proposal.proposed_coverage|e if proposal.proposed_coverage else '' }}"
+                                data-suggestion-score="{{ proposal.suggestion_score|e if proposal.suggestion_score else '' }}"
+                                data-submitted-by="{{ (proposal.github_username or proposal.user_name)|e }}"
+                                data-created-at="{{ (proposal.created_at_formatted or proposal.created_at)|e }}">
+                                <td>
+                                    {% if proposal.status == 'pending' %}
+                                    <input type="checkbox" class="proposal-select"
+                                           data-id="{{ proposal.id }}"
+                                           data-status="{{ proposal.status }}">
+                                    {% endif %}
+                                </td>
+                                <td>{{ proposal.id }}</td>
+                                <td>
+                                    <strong>{{ proposal.ke_id }}</strong> &rarr; <strong>{{ proposal.go_id }}</strong><br>
+                                    <div class="proposal-detail">
+                                        {{ proposal.ke_title }}<br>
+                                        &rarr; {{ proposal.go_name }}
+                                    </div>
+                                </td>
+                                <td>
+                                    <div>Connection: <strong>{{ proposal.new_pair_connection_type or proposal.proposed_connection_type }}</strong></div>
+                                    <div>Confidence: <strong>{{ proposal.new_pair_confidence_level or proposal.proposed_confidence }}</strong></div>
+                                </td>
+                                <td>
+                                    <div><strong>{{ proposal.github_username or proposal.user_name }}</strong></div>
+                                </td>
+                                <td>{{ "%.3f"|format(proposal.suggestion_score) if proposal.suggestion_score else '&mdash;' }}</td>
+                                <td>
+                                    <span class="status-{{ proposal.status }}">{{ proposal.status|title }}</span>
+                                    {% if proposal.admin_notes %}
+                                        <div class="proposal-detail">{{ proposal.admin_notes }}</div>
+                                    {% endif %}
+                                </td>
+                                <td>{{ proposal.created_at_formatted if proposal.created_at_formatted else 'Unknown' }}</td>
+                                <td>
+                                    <div class="proposal-actions">
+                                        {% if proposal.status == 'pending' %}
+                                            <button class="btn-approve" onclick="AdminProposals.handleApprove()">Approve</button>
+                                            <button class="btn-reject" onclick="AdminProposals.handleReject()">Reject</button>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- RIGHT: docked side panel -->
+                <div id="reviewPanel" style="position: sticky; top: 20px; border: 1px solid var(--color-border-light, #dee2e6); border-radius: 6px; padding: 16px; min-height: 300px; background: white;">
+                    <div id="reviewPanelContent">
+                        <p style="color: var(--color-text-muted, #6c757d);">Select a proposal to review.</p>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
-    <!-- Detail Modal -->
-    <div id="goProposalModal" class="modal-panel" style="display: none; width: 600px; max-height: 80vh; overflow-y: auto;">
-        <h3>GO Proposal Details</h3>
-        <div id="goModalContent"></div>
-        <div style="margin-top: 20px;">
-            <textarea id="goAdminNotes" placeholder="Add admin notes (optional)" style="width: 100%; height: 80px; margin-bottom: 15px;"></textarea>
-        </div>
-        <div style="text-align: right;">
-            <button onclick="closeGoModal()" class="btn-clear" style="margin-right: 8px;">Close</button>
-            <button id="goModalApproveBtn" onclick="confirmGoApprove()" class="btn-approve" style="display: none; padding:8px 16px;">Approve Proposal</button>
-            <button id="goModalRejectBtn" onclick="confirmGoReject()" class="btn-reject" style="display: none; padding:8px 16px;">Reject Proposal</button>
+    <!-- Cheat-sheet modal -->
+    <div id="cheatSheetModal" class="modal-panel" style="display: none; width: 400px;">
+        <h3>Keyboard Shortcuts</h3>
+        <table style="border-collapse: collapse; width: 100%;">
+            <tr><td style="padding: 6px 12px 6px 0;"><kbd>a</kbd></td><td>Approve current proposal</td></tr>
+            <tr><td style="padding: 6px 12px 6px 0;"><kbd>r</kbd></td><td>Reject current proposal</td></tr>
+            <tr><td style="padding: 6px 12px 6px 0;"><kbd>↑</kbd> / <kbd>↓</kbd></td><td>Navigate pending queue</td></tr>
+            <tr><td style="padding: 6px 12px 6px 0;"><kbd>?</kbd></td><td>Toggle this cheat sheet</td></tr>
+        </table>
+        <div style="margin-top: 16px; text-align: right;">
+            <button onclick="AdminProposals.closeCheatSheet()" class="btn-secondary">Close</button>
         </div>
     </div>
-    <div id="goModalOverlay" class="modal-overlay" style="display: none;" onclick="closeGoModal()"></div>
+    <div id="cheatSheetOverlay" class="modal-overlay" style="display: none;"
+         onclick="AdminProposals.closeCheatSheet()"></div>
 
     {% include 'components/footer.html' %}
 
     <script src="{{ url_for('static', filename='js/datatable-config.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/admin_proposals.js') }}"></script>
     <script>
-        let currentGoProposalId = null;
-        const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
-
-        // Phase 32 review C-1 port: escape user-controlled values before
-        // injecting into innerHTML to prevent stored XSS. go_name, go_id,
-        // ke_title, admin_notes, github_username, etc. flow into the detail
-        // modal and are curator-controlled at proposal-submit time. Mirrors
-        // the policy in admin_reactome_proposals.html.
-        function escapeHtml(s) {
-            if (s === null || s === undefined) return '';
-            return String(s)
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#39;');
-        }
-
-        // GO scoring config cache for admin dimension preview
-        let goScoringConfig = null;
-
-        async function loadGoScoringConfig() {
-            if (goScoringConfig) return goScoringConfig;
-            try {
-                const resp = await fetch('/api/go-scoring-config');
-                if (resp.ok) {
-                    const data = await resp.json();
-                    goScoringConfig = data.ke_go_assessment;
-                }
-            } catch (e) {
-                console.warn('Failed to load GO scoring config for admin modal, using defaults');
-            }
-            if (!goScoringConfig) {
-                goScoringConfig = {
-                    dimension_weights: { connection: 0.33, specificity: 0.33, evidence: 0.34 },
-                    dimension_thresholds: { high: 2.5, medium: 1.5 }
-                };
-            }
-            return goScoringConfig;
-        }
-
-        function computeDimensionConfidence(connScore, specScore, evScore, config) {
-            const weights = (config && config.dimension_weights) || { connection: 0.33, specificity: 0.33, evidence: 0.34 };
-            const thresholds = (config && config.dimension_thresholds) || { high: 2.5, medium: 1.5 };
-            const weightedAvg = (connScore * weights.connection) + (specScore * weights.specificity) + (evScore * weights.evidence);
-            let label;
-            if (weightedAvg >= thresholds.high) { label = 'high'; }
-            else if (weightedAvg >= thresholds.medium) { label = 'medium'; }
-            else { label = 'low'; }
-            return { label, score: weightedAvg };
-        }
-
-        function scoreToLabel(score) {
-            if (score === 3) return 'High';
-            if (score === 2) return 'Medium';
-            if (score === 1) return 'Low';
-            return '&mdash;';
-        }
-
-        function renderAdminDimensionToggles(dimension, prefilledScore) {
-            const tooltips = {
-                connection: 'How directly does this GO term relate to the key event\'s biological mechanism? High: direct mechanistic link. Medium: functionally related process. Low: broadly associated.',
-                specificity: 'How precisely does this GO term describe the key event? High: exact match to the biological process. Medium: correct but broader/narrower. Low: tangentially relevant.',
-                evidence: 'How strong is the literature evidence linking this GO term to this key event? High: multiple experimental studies. Medium: curated or computational evidence. Low: inferred or assumed.'
-            };
-            const labels = { connection: 'Connection (biological relevance)', specificity: 'Specificity (term precision)', evidence: 'Evidence (literature support)' };
-            const scores = [3, 2, 1];
-            const scoreLabels = { 3: 'High', 2: 'Medium', 1: 'Low' };
-            // Phase 32 review C-1 port: although these values are derived
-            // from hardcoded objects above, CONTEXT.md "no exceptions" policy
-            // requires every interpolation in HTML-producing template
-            // literals to be escaped — future-proof against any of these
-            // becoming data-driven.
-            const dimEsc = escapeHtml(dimension);
-            const btns = scores.map(s => {
-                const sel = s === prefilledScore ? ' selected' : '';
-                return `<button type="button" class="btn-option admin-dim-btn${escapeHtml(sel)}" data-dimension="${dimEsc}" data-score="${escapeHtml(String(s))}">${escapeHtml(scoreLabels[s])}</button>`;
-            }).join('');
-            return `
-                <div class="go-dimension-row" style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
-                    <span style="font-weight: 600; min-width: 220px; font-size: 14px;">${escapeHtml(labels[dimension])}
-                        <span title="${escapeHtml(tooltips[dimension])}" style="cursor: help; font-size: 13px; color: var(--color-text-muted, #6c757d);">&#9432;</span>
-                    </span>
-                    <div class="btn-group go-btn-group" data-dimension="${dimEsc}" style="margin: 0;">
-                        ${btns}
-                    </div>
-                </div>`;
-        }
-
-        function updateAdminDimensionPreview() {
-            const connScore = parseInt($('.admin-dim-btn.selected[data-dimension="connection"]').data('score') || 0);
-            const specScore = parseInt($('.admin-dim-btn.selected[data-dimension="specificity"]').data('score') || 0);
-            const evScore = parseInt($('.admin-dim-btn.selected[data-dimension="evidence"]').data('score') || 0);
-            const $badge = $('#admin-dimension-badge');
-            const $preview = $('#admin-dimension-preview');
-            const $approveBtn = document.getElementById('goModalApproveBtn');
-
-            if (connScore && specScore && evScore) {
-                const result = computeDimensionConfidence(connScore, specScore, evScore, goScoringConfig);
-                $badge
-                    .text(result.label.charAt(0).toUpperCase() + result.label.slice(1))
-                    .removeClass('badge-status-high badge-status-medium badge-status-low')
-                    .addClass('badge-status-' + result.label);
-                $preview.show();
-                if ($approveBtn) $approveBtn.disabled = false;
-            } else {
-                $preview.hide();
-                if ($approveBtn) $approveBtn.disabled = true;
-            }
-        }
-
-        $(document).ready(function() {
-            $('#goProposalsTable').DataTable(
-                DataTableConfig.merge('base', {
-                    order: [[0, 'desc']],
-                    pageLength: 25,
-                    responsive: true,
-                    columnDefs: [
-                        { width: '5%', targets: 0 },
-                        { width: '25%', targets: 1 },
-                        { width: '18%', targets: 2 },
-                        { width: '12%', targets: 3 },
-                        { width: '8%', targets: 4 },
-                        { width: '8%', targets: 5 },
-                        { width: '10%', targets: 6 },
-                        { width: '14%', targets: 7, orderable: false }
-                    ]
-                })
-            );
-
-            // Admin dimension toggle handler
-            $(document).on('click', '.admin-dim-btn', function() {
-                const $btn = $(this);
-                $btn.closest('.go-btn-group').find('.admin-dim-btn').removeClass('selected');
-                $btn.addClass('selected');
-                updateAdminDimensionPreview();
-            });
-        });
-
         function filterGoProposals() {
-            const status = document.getElementById('statusFilter').value;
-            const currentUrl = new URL(window.location);
+            var status = document.getElementById('statusFilter').value;
+            var currentUrl = new URL(window.location);
             currentUrl.searchParams.set('status', status);
             window.location = currentUrl.toString();
         }
 
-        function viewGoProposal(proposalId) {
-            currentGoProposalId = proposalId;
-            loadGoScoringConfig().then(function() {
-                $.get(`/admin/go-proposals/${proposalId}`)
-                    .done(function(proposal) { showGoProposalModal(proposal); })
-                    .fail(function(xhr) { alert('Error loading GO proposal: ' + (xhr.responseJSON?.error || 'Unknown error')); });
-            });
-        }
-
-        function showGoProposalModal(proposal) {
-            const modal = document.getElementById('goProposalModal');
-            const overlay = document.getElementById('goModalOverlay');
-            const content = document.getElementById('goModalContent');
-            const approveBtn = document.getElementById('goModalApproveBtn');
-            const rejectBtn = document.getElementById('goModalRejectBtn');
-
-            // Curator's proposed dimension scores
-            const cConn = proposal.proposed_connection_score;
-            const cSpec = proposal.proposed_specificity_score;
-            const cEv = proposal.proposed_evidence_score;
-            const hasCuratorScores = cConn !== null && cConn !== undefined
-                                  && cSpec !== null && cSpec !== undefined
-                                  && cEv !== null && cEv !== undefined;
-
-            // Pre-escape curator dimension labels per "no exceptions" policy
-            // (even though scoreToLabel returns hardcoded strings).
-            const cConnEsc = escapeHtml(scoreToLabel(cConn));
-            const cSpecEsc = escapeHtml(scoreToLabel(cSpec));
-            const cEvEsc = escapeHtml(scoreToLabel(cEv));
-            const curatorScoreHtml = hasCuratorScores
-                ? `<div style="margin-top: 6px; font-size: 13px; color: var(--color-text-muted, #6c757d);">
-                       Curator's assessment: Connection=${cConnEsc}, Specificity=${cSpecEsc}, Evidence=${cEvEsc}
-                   </div>`
-                : `<div style="margin-top: 6px; font-size: 13px; color: var(--color-text-muted, #6c757d);">No dimension assessment submitted (legacy proposal)</div>`;
-
-            // Admin toggles pre-filled with curator's scores if available
-            const adminDimHtml = renderAdminDimensionToggles('connection', hasCuratorScores ? cConn : null)
-                               + renderAdminDimensionToggles('specificity', hasCuratorScores ? cSpec : null)
-                               + renderAdminDimensionToggles('evidence', hasCuratorScores ? cEv : null);
-
-            // Check if curator's scores are all pre-filled (enable approve immediately)
-            const allPreFilled = hasCuratorScores;
-
-            const rawNs = proposal.go_namespace || 'biological_process';
-            const nsShort = rawNs === 'molecular_function' ? 'MF' : 'BP';
-            const nsBadgeClass = rawNs === 'molecular_function' ? 'badge-go-mf' : 'badge-go-bp';
-            // Even though nsShort/nsBadgeClass are derived from a closed set of
-            // hardcoded literals here, CONTEXT.md "no exceptions" policy
-            // requires every interpolation in the modal-body innerHTML to be
-            // escaped — future-proof against go_namespace becoming a
-            // pass-through field.
-            const nsShortEsc = escapeHtml(nsShort);
-            const nsBadgeClassEsc = escapeHtml(nsBadgeClass);
-            const nsBadgeHtml = `<span class="${nsBadgeClassEsc}" style="margin-left: 6px;">${nsShortEsc}</span>`;
-
-            // Status is a DB enum (pending/approved/rejected) but escape both
-            // the class fragment and display text for defense-in-depth.
-            const statusRaw = proposal.status || '';
-            const statusEsc = escapeHtml(statusRaw);
-
-            content.innerHTML = `
-                <div style="margin-bottom: 20px;">
-                    <h4>Mapping Information</h4>
-                    <div><strong>KE ID:</strong> ${proposal.ke_id ? escapeHtml(proposal.ke_id) : '&mdash;'}</div>
-                    <div><strong>KE Title:</strong> ${proposal.ke_title ? escapeHtml(proposal.ke_title) : '&mdash;'}</div>
-                    <div><strong>GO ID:</strong> ${proposal.go_id ? escapeHtml(proposal.go_id) : '&mdash;'}</div>
-                    <div><strong>GO Name:</strong> ${proposal.go_name ? escapeHtml(proposal.go_name) : '&mdash;'}</div>
-                    <div><strong>GO Namespace:</strong> ${nsBadgeHtml}</div>
-                </div>
-                <div style="margin-bottom: 20px;">
-                    <h4>Proposed Values</h4>
-                    <div><strong>Connection Type:</strong> ${escapeHtml(proposal.new_pair_connection_type || proposal.proposed_connection_type || '') || '&mdash;'}</div>
-                    <div><strong>Confidence Level:</strong> ${escapeHtml(proposal.new_pair_confidence_level || proposal.proposed_confidence || '') || '&mdash;'}</div>
-                    <div><strong>BioBERT Score:</strong> ${proposal.suggestion_score !== null && proposal.suggestion_score !== undefined ? escapeHtml(Number(proposal.suggestion_score).toFixed(3)) : '&mdash;'}</div>
-                </div>
-                <div style="margin-bottom: 20px;">
-                    <h4>Submission Details</h4>
-                    <div><strong>Submitted By:</strong> ${escapeHtml(proposal.github_username || proposal.user_name || '') || '&mdash;'}</div>
-                    <div><strong>Submitted At:</strong> ${escapeHtml(proposal.created_at_formatted || proposal.created_at || '') || '&mdash;'}</div>
-                    <div><strong>Status:</strong> <span class="status-${statusEsc}">${statusEsc}</span></div>
-                    ${proposal.admin_notes ? `<div><strong>Admin Notes:</strong> ${escapeHtml(proposal.admin_notes)}</div>` : ''}
-                    ${proposal.approved_at_formatted ? `<div><strong>Reviewed At:</strong> ${escapeHtml(proposal.approved_at_formatted)}</div>` : ''}
-                </div>
-                <div style="margin-bottom: 20px; border-top: 1px solid var(--color-border-light); padding-top: 16px;">
-                    <h4 style="margin-bottom: 10px;">Assessment</h4>
-                    ${curatorScoreHtml}
-                    <div style="margin-top: 14px;">
-                        <div style="font-weight: 600; margin-bottom: 8px; font-size: 14px;">Admin dimension scores:</div>
-                        ${adminDimHtml}
-                    </div>
-                    <div id="admin-dimension-preview" style="display: none; margin-top: 10px; padding: 8px 12px; background: var(--color-bg-subtle, #f8f9fa); border-radius: 4px; border: 1px solid var(--color-border-light);">
-                        Computed confidence: <span id="admin-dimension-badge" class="badge-status-medium" style="font-size: 13px;">--</span>
-                    </div>
-                </div>
-            `;
-
-            if (proposal.status === 'pending') {
-                approveBtn.style.display = 'inline-block';
-                rejectBtn.style.display = 'inline-block';
-                // Gate approve button: disabled until all three admin dimensions selected
-                approveBtn.disabled = !allPreFilled;
-                // If pre-filled, show initial preview
-                if (allPreFilled) {
-                    updateAdminDimensionPreview();
-                }
-            } else {
-                approveBtn.style.display = 'none';
-                rejectBtn.style.display = 'none';
-            }
-
-            modal.style.display = 'block';
-            overlay.style.display = 'block';
-        }
-
-        function closeGoModal() {
-            document.getElementById('goProposalModal').style.display = 'none';
-            document.getElementById('goModalOverlay').style.display = 'none';
-            currentGoProposalId = null;
-        }
-
-        function approveGoProposal(proposalId) {
-            currentGoProposalId = proposalId;
-            if (!confirm('Approve this KE-GO proposal? This will create a live mapping.')) return;
-            $.post(`/admin/go-proposals/${proposalId}/approve`, { admin_notes: '', csrf_token: csrfToken })
-                .done(function(response) {
-                    alert(response.message || 'GO proposal approved.');
-                    location.reload();
-                })
-                .fail(function(xhr) {
-                    alert('Error: ' + (xhr.responseJSON?.error || 'Failed to approve GO proposal'));
-                });
-        }
-
-        function rejectGoProposal(proposalId) {
-            currentGoProposalId = proposalId;
-            const reason = prompt('Reason for rejection (optional):') || '';
-            $.post(`/admin/go-proposals/${proposalId}/reject`, { admin_notes: reason, csrf_token: csrfToken })
-                .done(function(response) {
-                    alert(response.message || 'GO proposal rejected.');
-                    location.reload();
-                })
-                .fail(function(xhr) {
-                    alert('Error: ' + (xhr.responseJSON?.error || 'Failed to reject GO proposal'));
-                });
-        }
-
-        function confirmGoApprove() {
-            if (currentGoProposalId) {
-                const notes = document.getElementById('goAdminNotes').value;
-                const connScore = parseInt($('.admin-dim-btn.selected[data-dimension="connection"]').data('score') || 0);
-                const specScore = parseInt($('.admin-dim-btn.selected[data-dimension="specificity"]').data('score') || 0);
-                const evScore = parseInt($('.admin-dim-btn.selected[data-dimension="evidence"]').data('score') || 0);
-                if (!connScore || !specScore || !evScore) {
-                    alert('Please select all three dimension scores before approving.');
-                    return;
-                }
-                $.post(`/admin/go-proposals/${currentGoProposalId}/approve`, {
-                    admin_notes: notes,
-                    connection_score: connScore,
-                    specificity_score: specScore,
-                    evidence_score: evScore,
-                    csrf_token: csrfToken
-                })
-                    .done(function(response) {
-                        alert(response.message || 'GO proposal approved.');
-                        closeGoModal();
-                        location.reload();
-                    })
-                    .fail(function(xhr) {
-                        alert('Error: ' + (xhr.responseJSON?.error || 'Failed to approve GO proposal'));
-                    });
-            }
-        }
-
-        function confirmGoReject() {
-            if (currentGoProposalId) {
-                const notes = document.getElementById('goAdminNotes').value;
-                $.post(`/admin/go-proposals/${currentGoProposalId}/reject`, { admin_notes: notes, csrf_token: csrfToken })
-                    .done(function(response) {
-                        alert(response.message || 'GO proposal rejected.');
-                        closeGoModal();
-                        location.reload();
-                    })
-                    .fail(function(xhr) {
-                        alert('Error: ' + (xhr.responseJSON?.error || 'Failed to reject GO proposal'));
-                    });
-            }
-        }
+        AdminProposals.init({
+            resource: 'go',
+            detailUrl: '/admin/go-proposals',
+            approveUrl: '/admin/go-proposals',
+            rejectUrl: '/admin/go-proposals',
+            bulkApproveUrl: '/admin/go-proposals/bulk-approve',
+            tableId: 'goProposalsTable',
+            csrfToken: '{{ csrf_token() }}'
+        });
     </script>
 </body>
 </html>
