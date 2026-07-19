@@ -27,6 +27,7 @@ import json
 import logging
 import math
 import os
+import re
 import sys
 from collections import defaultdict, deque
 from urllib.request import Request, urlopen
@@ -66,6 +67,53 @@ NAMESPACE_ROOTS = {
 # Mirrors the Reactome filter in download_reactome_annotations.py.
 MIN_GENES = 10
 MAX_GENES = 500
+
+# Canonical generic BP process terms that recur across many AOPs (cell death,
+# inflammation, DNA damage, ROS, oxidative stress). Their PROPAGATED gene sets
+# exceed MAX_GENES, so the gene-count ceiling drops them and curators can neither
+# suggest nor search them for generic upstream KEs (#193). These IDs are
+# force-included in the suggestion corpus regardless of gene count. Keep neutral,
+# non-obsolete terms only — extend as new generic KEs surface.
+GENERIC_BP_WHITELIST = {
+    "GO:0006954": "inflammatory response",
+    "GO:0008219": "cell death",
+    "GO:0006915": "apoptotic process",
+    "GO:0012501": "programmed cell death",
+    "GO:0006974": "DNA damage response",
+    "GO:0072593": "reactive oxygen species metabolic process",
+    "GO:0006979": "response to oxidative stress",
+}
+
+# Directional / signed GO labels must never be suggested for a KE Process slot:
+# direction belongs in the KE's PATO Action slot, not the GO term (see the
+# amigo-ke-go-mapping skill's directionality lexicon). Terms whose label matches
+# any of these operators are excluded from the suggestion corpus entirely (#193).
+# NOTE: neutral "regulation of X" (no sign), bare "X activation" (e.g. "T cell
+# activation"), and "... activity" MF terms are deliberately NOT matched.
+DIRECTIONAL_LABEL_RE = re.compile(
+    "|".join([
+        r"\bpositive regulation of\b",
+        r"\bnegative regulation of\b",
+        r"\bactivation of\b",
+        r"\binhibition of\b",
+        r"\binduction of\b",
+        r"\brepression of\b",
+        r"\bsuppression of\b",
+        r"\bstimulation of\b",
+        r"\bup[- ]?regulation\b",
+        r"\bdown[- ]?regulation\b",
+        r"\bincreased?\b",
+        r"\bdecreased?\b",
+        r"\bactivated\b",
+        r"\binhibited\b",
+    ]),
+    re.IGNORECASE,
+)
+
+
+def is_directional_label(name: str) -> bool:
+    """True if a GO label encodes a sign/direction (excluded from the corpus)."""
+    return bool(name and DIRECTIONAL_LABEL_RE.search(name))
 
 
 def download_go_obo(url=GO_BASIC_OBO_URL, local_path=GO_BASIC_OBO_LOCAL, force=False):
@@ -440,20 +488,46 @@ def main():
 
     # Write the filtered-ID list: terms whose propagated gene set is in
     # [MIN_GENES, MAX_GENES]. Drives the embedding-corpus subset (subset_go_corpus.py).
-    in_range = sorted(
+    in_range_ids = {
         go_id for go_id, c in propagated_counts.items()
         if MIN_GENES <= c <= MAX_GENES
-    )
+    }
     dropped_zero = sum(1 for c in propagated_counts.values() if c == 0)
     dropped_low = sum(1 for c in propagated_counts.values() if 0 < c < MIN_GENES)
     dropped_high = sum(1 for c in propagated_counts.values() if c > MAX_GENES)
+
+    # Force-include the curated generic BP terms dropped by the gene-count ceiling
+    # so they are suggestable/searchable for generic upstream KEs (#193, BP only).
+    whitelist = set(GENERIC_BP_WHITELIST) if namespace == 'bp' else set()
+    forced = {gid for gid in whitelist if gid in terms}
+    missing_whitelist = sorted(whitelist - forced)
+    n_whitelisted = len(forced - in_range_ids)
+
+    # Exclude directional/signed terms entirely — direction lives in the KE's PATO
+    # Action slot, not the GO term, so signed variants must never be suggested (#193).
+    candidate_ids = in_range_ids | forced
+    kept, n_directional_excluded = set(), 0
+    for gid in candidate_ids:
+        if is_directional_label((terms.get(gid) or {}).get('name') or ''):
+            n_directional_excluded += 1
+            continue
+        kept.add(gid)
+    in_range = sorted(kept)
+
     with open(filtered_ids_path, 'w', encoding='utf-8') as f:
         json.dump(in_range, f, indent=2)
     logger.info(
-        "Filter [%d,%d] genes: %d kept (of %d) | dropped: %d zero-gene, %d <%d, %d >%d -> %s",
+        "Filter [%d,%d] genes: %d kept (of %d) | dropped: %d zero-gene, %d <%d, %d >%d | "
+        "+%d generic-whitelisted, -%d directional-excluded -> %s",
         MIN_GENES, MAX_GENES, len(in_range), len(propagated_counts),
-        dropped_zero, dropped_low, MIN_GENES, dropped_high, MAX_GENES, filtered_ids_path,
+        dropped_zero, dropped_low, MIN_GENES, dropped_high, MAX_GENES,
+        n_whitelisted, n_directional_excluded, filtered_ids_path,
     )
+    if missing_whitelist:
+        logger.warning(
+            "Whitelisted generic terms not found in parsed %s namespace (obsolete/renamed?): %s",
+            namespace, ", ".join(missing_whitelist),
+        )
     logger.info("Done.")
 
 

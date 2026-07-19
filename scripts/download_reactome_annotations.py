@@ -49,6 +49,17 @@ DISEASE_ROOT = "R-HSA-1643685"
 MIN_GENES = 10
 MAX_GENES = 500
 
+# Umbrella pathways that best fit generic upstream KEs but whose gene set exceeds
+# MAX_GENES, so the ceiling drops them and curators can neither suggest nor search
+# them (#196). Force-included past the ceiling. Disease-branch exclusion and the
+# MIN_GENES floor still apply. Extend as new generic KEs surface.
+UMBRELLA_WHITELIST = {
+    "R-HSA-5357801": "Programmed Cell Death",
+    "R-HSA-109581": "Apoptosis",
+    "R-HSA-73894": "DNA Repair",
+    "R-HSA-3299685": "Detoxification of Reactive Oxygen Species",
+}
+
 # Output file paths
 OUTPUT_PATH = "data/reactome_gene_annotations.json"
 FILTERED_STIDS_PATH = "data/reactome_filtered_stids.json"
@@ -370,20 +381,36 @@ def filter_annotations(raw_annotations, disease_ids, min_genes=MIN_GENES, max_ge
     filtered = {}
     n_disease = 0
     n_genecount = 0
+    n_whitelisted = 0
 
     for stid, genes in raw_annotations.items():
         if stid in disease_ids:
             n_disease += 1
             continue
-        if not (min_genes <= len(genes) <= max_genes):
+        n = len(genes)
+        if n < min_genes:
             n_genecount += 1
             continue
+        if n > max_genes:
+            # Umbrella pathways bypass the upper bound so generic KEs can map to them.
+            if stid in UMBRELLA_WHITELIST:
+                n_whitelisted += 1
+            else:
+                n_genecount += 1
+                continue
         filtered[stid] = genes
 
+    missing_whitelist = sorted(set(UMBRELLA_WHITELIST) - set(filtered))
     logger.info(
-        "Filter results: %d kept (from %d raw) | excluded: %d disease branch, %d gene count out of bounds",
-        len(filtered), len(raw_annotations), n_disease, n_genecount
+        "Filter results: %d kept (from %d raw) | excluded: %d disease branch, "
+        "%d gene count out of bounds | +%d umbrella-whitelisted",
+        len(filtered), len(raw_annotations), n_disease, n_genecount, n_whitelisted
     )
+    if missing_whitelist:
+        logger.warning(
+            "Umbrella-whitelisted pathways absent from the raw GMT (renamed/withdrawn?): %s",
+            ", ".join(missing_whitelist),
+        )
     return filtered
 
 

@@ -16,7 +16,12 @@ from src.core.config_loader import ConfigLoader
 from src.suggestions.ke_genes import get_genes_from_ke
 from src.suggestions.scoring import combine_scored_items
 from src.utils.description_toggle import resolve_description_usage
-from src.utils.text import remove_directionality_terms, detect_ke_direction, detect_go_direction
+from src.utils.text import (
+    remove_directionality_terms,
+    detect_ke_direction,
+    detect_go_direction,
+    is_directional_go_label,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -395,6 +400,14 @@ class GoSuggestionService:
         # Apply direction-based score adjustments (boost/penalty)
         combined = self._apply_direction_adjustment(combined, ke_title, ns_data)
 
+        # Never suggest signed/directional GO terms — direction belongs in the KE's
+        # PATO Action slot, not the GO Process term (#193). This runtime guard holds
+        # even before the corpus is rebuilt to exclude them at the source.
+        combined = [
+            s for s in combined
+            if not is_directional_go_label(s.get('go_name', ''))
+        ]
+
         return combined
 
     def get_go_suggestions(
@@ -480,8 +493,24 @@ class GoSuggestionService:
             go_name = metadata.get('name', '')
             go_definition = metadata.get('definition', '')
 
+            # Signed/directional terms are never valid KE Process terms (#193).
+            if is_directional_go_label(go_name):
+                continue
+
             name_clean = self._clean_text(go_name)
             name_similarity = SequenceMatcher(None, query_clean, name_clean).ratio()
+
+            # Exact/whole-word/substring boost so an exact label match wins over a
+            # fuzzy near-miss (e.g. "cell death" must beat "cell growth"), with the
+            # fuzzy ratio kept only as a tiebreaker. Mirrors the Reactome search
+            # substring boost, extended with exact + whole-word tiers (#193).
+            if name_clean:
+                if query_clean == name_clean:
+                    name_similarity = 1.0
+                elif f" {query_clean} " in f" {name_clean} ":
+                    name_similarity = max(name_similarity, 0.92)
+                elif query_clean in name_clean:
+                    name_similarity = max(name_similarity, 0.85)
 
             def_similarity = 0.0
             if go_definition:
