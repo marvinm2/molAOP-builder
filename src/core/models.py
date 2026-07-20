@@ -3314,6 +3314,27 @@ class GoMappingModel:
         finally:
             conn.close()
 
+    def delete_mapping(self, mapping_id: int, deleted_by: str = None) -> bool:
+        """
+        Delete a KE-GO mapping by id.
+
+        Called at GO proposal-approval time when a curator approves a
+        deletion proposal (proposed_delete=True) against an existing
+        approved mapping. Mirrors MappingModel.delete_mapping (WP).
+        """
+        conn = self.db.get_connection()
+        try:
+            conn.execute("DELETE FROM ke_go_mappings WHERE id = ?", (mapping_id,))
+            conn.commit()
+            logger.info("Deleted GO mapping %s by %s", mapping_id, deleted_by)
+            return True
+        except Exception as e:
+            logger.error("Error deleting GO mapping: %s", e)
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
 
 class GoProposalModel:
     # Sentinel returned from create_new_pair_go_proposal when the
@@ -3335,8 +3356,18 @@ class GoProposalModel:
         proposed_delete: bool = False,
         proposed_confidence: str = None,
         proposed_connection_type: str = None,
+        ke_id: str = None,
+        ke_title: str = None,
+        go_id: str = None,
+        go_name: str = None,
     ) -> Optional[int]:
-        """Create a new GO mapping proposal"""
+        """Create a change/deletion proposal against an existing GO mapping.
+
+        mapping_id is set (unlike create_new_pair_go_proposal), so
+        approve_go_proposal() applies the change to that mapping rather than
+        creating a new one. The ke_id/go_id display fields are stored so the
+        admin review queue can render the proposal without re-joining.
+        """
         proposal_uuid = str(uuid_lib.uuid4())
         conn = self.db.get_connection()
         try:
@@ -3344,8 +3375,9 @@ class GoProposalModel:
                 """
                 INSERT INTO ke_go_proposals (mapping_id, user_name, user_email, user_affiliation,
                                             provider_username, proposed_delete, proposed_confidence,
-                                            proposed_connection_type, uuid)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                            proposed_connection_type, uuid,
+                                            ke_id, ke_title, go_id, go_name)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     mapping_id,
@@ -3357,6 +3389,10 @@ class GoProposalModel:
                     proposed_confidence,
                     proposed_connection_type,
                     proposal_uuid,
+                    ke_id,
+                    ke_title,
+                    go_id,
+                    go_name,
                 ),
             )
 
@@ -4710,8 +4746,18 @@ class ReactomeProposalModel:
         proposed_basis: Optional[str] = None,
         proposed_specificity: Optional[str] = None,
         proposed_coverage: Optional[str] = None,
+        ke_id: str = None,
+        ke_title: str = None,
+        reactome_id: str = None,
+        pathway_name: str = None,
     ) -> Optional[int]:
-        """Create a new Reactome mapping proposal"""
+        """Create a change/deletion proposal against an existing Reactome mapping.
+
+        mapping_id is set (unlike create_new_pair_reactome_proposal), so
+        approve_reactome_proposal() applies the change to that mapping. The
+        ke_id/reactome_id display fields are stored so the admin review queue
+        can render the proposal.
+        """
         proposal_uuid = str(uuid_lib.uuid4())
         conn = self.db.get_connection()
         try:
@@ -4720,13 +4766,15 @@ class ReactomeProposalModel:
                 INSERT INTO ke_reactome_proposals (mapping_id, user_name, user_email, user_affiliation,
                                                    provider_username, proposed_delete, proposed_confidence,
                                                    uuid, proposed_relationship, proposed_basis,
-                                                   proposed_specificity, proposed_coverage)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                                   proposed_specificity, proposed_coverage,
+                                                   ke_id, ke_title, reactome_id, pathway_name)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (mapping_id, user_name, user_email, user_affiliation,
                  provider_username, proposed_delete, proposed_confidence,
                  proposal_uuid, proposed_relationship, proposed_basis,
-                 proposed_specificity, proposed_coverage),
+                 proposed_specificity, proposed_coverage,
+                 ke_id, ke_title, reactome_id, pathway_name),
             )
             conn.commit()
             logger.info(
@@ -4738,6 +4786,24 @@ class ReactomeProposalModel:
             logger.error("Error creating Reactome proposal: %s", e)
             conn.rollback()
             return None
+        finally:
+            conn.close()
+
+    def find_mapping_by_details(self, ke_id: str, reactome_id: str) -> Optional[int]:
+        """Find a Reactome mapping id by KE and Reactome IDs.
+
+        Mirrors GoProposalModel.find_mapping_by_details; used by the
+        /submit_reactome_proposal route to resolve the mapping a change or
+        deletion proposal targets.
+        """
+        conn = self.db.get_connection()
+        try:
+            cursor = conn.execute(
+                "SELECT id FROM ke_reactome_mappings WHERE ke_id = ? AND reactome_id = ?",
+                (ke_id, reactome_id),
+            )
+            row = cursor.fetchone()
+            return row["id"] if row else None
         finally:
             conn.close()
 

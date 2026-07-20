@@ -197,6 +197,95 @@ class ProposalSchema(Schema):
             raise ValidationError(f"Entry must be valid JSON: {str(e)}")
 
 
+class _MappingChangeProposalSchema(Schema):
+    """Shared base for KE-GO / KE-Reactome change/deletion proposals.
+
+    Mirrors ProposalSchema's contact + change fields but validates the entry
+    against a resource-specific id field (go_id / reactome_id) rather than the
+    WikiPathways pathway_id. Subclasses set ``_id_field`` and ``_id_aliases``.
+    """
+
+    _id_field = None
+    _id_aliases = ()
+
+    entry = fields.Str(required=True)  # JSON string of entry data
+    userName = fields.Str(
+        required=True,
+        validate=[
+            validate.Length(min=1, max=100),
+            validate.Regexp(
+                r"^[a-zA-Z0-9\s\-\.\'_]+$",
+                error="Name can only contain letters, numbers, spaces, hyphens, dots, apostrophes, and underscores",
+            ),
+        ],
+    )
+    userEmail = fields.Email(required=True)
+    userAffiliation = fields.Str(
+        required=True, validate=validate.Length(min=1, max=200)
+    )
+    deleteEntry = fields.Str(missing="", validate=validate.OneOf(["", "on"]))
+
+    @validates("entry")
+    def validate_entry_json(self, value):
+        """Validate that entry is valid JSON carrying ke_id + the resource id."""
+        import json
+
+        try:
+            if value.startswith('"') and value.endswith('"'):
+                value = json.loads(value)
+            entry_data = json.loads(value.replace("'", '"'))
+
+            if not isinstance(entry_data, dict):
+                raise ValidationError("Entry must be a JSON object")
+
+            field_aliases = {
+                "ke_id": ("ke_id", "KEID"),
+                self._id_field: self._id_aliases,
+            }
+            missing_fields = [
+                field
+                for field, aliases in field_aliases.items()
+                if not any(entry_data.get(alias) for alias in aliases)
+            ]
+            if missing_fields:
+                raise ValidationError(
+                    f"Entry missing required fields: {missing_fields}"
+                )
+        except json.JSONDecodeError as e:
+            raise ValidationError(f"Entry must be valid JSON: {str(e)}")
+
+
+class GoProposalChangeSchema(_MappingChangeProposalSchema):
+    """Schema for KE-GO change/deletion proposals (issue #197).
+
+    GO mappings carry a confidence level and a connection type, so both are
+    revisable in addition to deletion.
+    """
+
+    _id_field = "go_id"
+    _id_aliases = ("go_id", "GOID")
+
+    changeConfidence = fields.Str(
+        missing="", validate=validate.OneOf(["", "low", "medium", "high"])
+    )
+    changeType = fields.Str(
+        missing="",
+        validate=validate.OneOf(["", "causative", "responsive", "undefined"]),
+    )
+
+
+class ReactomeProposalChangeSchema(_MappingChangeProposalSchema):
+    """Schema for KE-Reactome deletion proposals (issue #197).
+
+    Reactome mappings have no connection type and their confidence is locked at
+    proposal creation (D-02), so the only correction a change proposal can
+    carry is a deletion request.
+    """
+
+    _id_field = "reactome_id"
+    _id_aliases = ("reactome_id", "reactomeId")
+
+
 class GoMappingSchema(Schema):
     """Schema for KE-GO mapping submissions"""
 

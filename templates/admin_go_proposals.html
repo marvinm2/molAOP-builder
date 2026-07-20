@@ -77,10 +77,12 @@
                             {% for proposal in proposals %}
                             <tr data-proposal-id="{{ proposal.id }}"
                                 data-status="{{ proposal.status|e }}"
-                                data-ke-id="{{ proposal.ke_id|e }}"
-                                data-ke-title="{{ proposal.ke_title|e }}"
-                                data-pathway-id="{{ proposal.go_id|e }}"
-                                data-pathway-title="{{ proposal.go_name|e }}"
+                                data-mapping-id="{{ proposal.mapping_id if proposal.mapping_id else '' }}"
+                                data-proposed-delete="{{ 1 if proposal.proposed_delete else 0 }}"
+                                data-ke-id="{{ (proposal.ke_id or proposal.mapping_ke_id)|e }}"
+                                data-ke-title="{{ (proposal.ke_title or proposal.mapping_ke_title)|e }}"
+                                data-pathway-id="{{ (proposal.go_id or proposal.mapping_go_id)|e }}"
+                                data-pathway-title="{{ (proposal.go_name or proposal.mapping_go_name)|e }}"
                                 data-confidence="{{ (proposal.new_pair_confidence_level or proposal.proposed_confidence)|e }}"
                                 data-connection-type="{{ (proposal.new_pair_connection_type or proposal.proposed_connection_type)|e }}"
                                 data-proposed-relationship="{{ proposal.proposed_relationship|e if proposal.proposed_relationship else '' }}"
@@ -99,15 +101,22 @@
                                 </td>
                                 <td>{{ proposal.id }}</td>
                                 <td>
-                                    <strong>{{ proposal.ke_id }}</strong> &rarr; <strong>{{ proposal.go_id }}</strong><br>
+                                    <strong>{{ proposal.ke_id or proposal.mapping_ke_id }}</strong> &rarr; <strong>{{ proposal.go_id or proposal.mapping_go_id }}</strong><br>
                                     <div class="proposal-detail">
-                                        {{ proposal.ke_title }}<br>
-                                        &rarr; {{ proposal.go_name }}
+                                        {{ proposal.ke_title or proposal.mapping_ke_title }}<br>
+                                        &rarr; {{ proposal.go_name or proposal.mapping_go_name }}
                                     </div>
                                 </td>
                                 <td>
-                                    <div>Connection: <strong>{{ proposal.new_pair_connection_type or proposal.proposed_connection_type }}</strong></div>
-                                    <div>Confidence: <strong>{{ proposal.new_pair_confidence_level or proposal.proposed_confidence }}</strong></div>
+                                    {% if proposal.mapping_id and proposal.proposed_delete %}
+                                        <span class="badge-status-low">Deletion requested</span>
+                                    {% else %}
+                                        {% if proposal.mapping_id %}<div><em>Change to existing</em></div>{% endif %}
+                                        {% set _conn = proposal.new_pair_connection_type or proposal.proposed_connection_type %}
+                                        {% set _conf = proposal.new_pair_confidence_level or proposal.proposed_confidence %}
+                                        {% if _conn %}<div>Connection: <strong>{{ _conn }}</strong></div>{% endif %}
+                                        {% if _conf %}<div>Confidence: <strong>{{ _conf }}</strong></div>{% endif %}
+                                    {% endif %}
                                 </td>
                                 <td>
                                     <div><strong>{{ proposal.github_username or proposal.user_name }}</strong></div>
