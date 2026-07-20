@@ -18,10 +18,12 @@ from src.core.schemas import (
     CheckEntrySchema,
     GoCheckEntrySchema,
     GoMappingSchema,
+    GoProposalChangeSchema,
     MappingSchema,
     ProposalSchema,
     ReactomeCheckEntrySchema,
     ReactomeMappingSchema,
+    ReactomeProposalChangeSchema,
     SecurityValidation,
     validate_request_data,
 )
@@ -707,6 +709,206 @@ def submit_proposal():
 
     except Exception as e:
         logger.error("Error saving proposal: %s", e)
+        return jsonify({"error": "Failed to save proposal"}), 500
+
+
+def _parse_change_proposal_entry(entry_data, id_keys):
+    """Parse a change-proposal entry JSON string, returning (ke_id, resource_id).
+
+    Handles the same single/double JSON serialisation quirk as submit_proposal.
+    Returns (None, None) on parse failure so callers can 400.
+    """
+    try:
+        if entry_data.startswith('"') and entry_data.endswith('"'):
+            entry_data = json.loads(entry_data)
+        entry_dict = json.loads(entry_data.replace("'", '"'))
+        ke_id = entry_dict.get("ke_id") or entry_dict.get("KE_ID")
+        resource_id = None
+        for key in id_keys:
+            if entry_dict.get(key):
+                resource_id = entry_dict.get(key)
+                break
+        return entry_dict, ke_id, resource_id
+    except (json.JSONDecodeError, AttributeError):
+        return None, None, None
+
+
+@api_bp.route("/submit_go_proposal", methods=["POST"])
+@login_required
+@submission_rate_limit
+def submit_go_proposal():
+    """Save a change/deletion proposal against an existing KE-GO mapping.
+
+    Feeds the /admin/go-proposals review queue so corrections to approved GO
+    mappings stay inside the auditable proposal workflow (issue #197), matching
+    the WikiPathways "Propose Change" action.
+    """
+    try:
+        proposal_data = {
+            "entry": request.form.get("entry"),
+            "userName": request.form.get("userName"),
+            "userEmail": request.form.get("userEmail"),
+            "userAffiliation": request.form.get("userAffiliation"),
+            "deleteEntry": request.form.get("deleteEntry", ""),
+            "changeConfidence": request.form.get("changeConfidence", ""),
+            "changeType": request.form.get("changeType", ""),
+        }
+
+        is_valid, validated_data, errors = validate_request_data(
+            GoProposalChangeSchema, proposal_data
+        )
+        if not is_valid:
+            logger.warning("Invalid GO change proposal request: %s", errors)
+            return jsonify({"error": "Invalid input data", "details": errors}), 400
+
+        entry_data = validated_data["entry"]
+        user_name = SecurityValidation.sanitize_string(validated_data["userName"])
+        user_email = validated_data["userEmail"]
+        user_affiliation = SecurityValidation.sanitize_string(
+            validated_data["userAffiliation"]
+        )
+        proposed_delete = validated_data["deleteEntry"] == "on"
+        proposed_confidence = validated_data.get("changeConfidence") or None
+        proposed_connection_type = validated_data.get("changeType") or None
+
+        if not (proposed_delete or proposed_confidence or proposed_connection_type):
+            return jsonify({"error": "No changes specified."}), 400
+
+        if not SecurityValidation.validate_email_domain(user_email):
+            return jsonify({"error": "Invalid email domain."}), 400
+
+        entry_dict, ke_id, go_id = _parse_change_proposal_entry(
+            entry_data, ("go_id", "GO_ID")
+        )
+        if entry_dict is None:
+            return jsonify({"error": "Could not parse entry data."}), 400
+        if not ke_id or not go_id:
+            return jsonify({"error": "Invalid entry data format."}), 400
+
+        if not go_proposal_model:
+            return jsonify({"error": "GO mapping service unavailable"}), 503
+
+        mapping_id = go_proposal_model.find_mapping_by_details(ke_id, go_id)
+        if not mapping_id:
+            return jsonify({"error": "Original mapping not found."}), 404
+
+        provider_username = session.get("user", {}).get("username", "unknown")
+
+        proposal_id = go_proposal_model.create_proposal(
+            mapping_id=mapping_id,
+            user_name=user_name,
+            user_email=user_email,
+            user_affiliation=user_affiliation,
+            provider_username=provider_username,
+            proposed_delete=proposed_delete,
+            proposed_confidence=proposed_confidence,
+            proposed_connection_type=proposed_connection_type,
+            ke_id=ke_id,
+            ke_title=entry_dict.get("ke_title"),
+            go_id=go_id,
+            go_name=entry_dict.get("go_name"),
+        )
+
+        if proposal_id:
+            logger.info(
+                "Created GO change proposal %s by %s for mapping %s",
+                proposal_id, provider_username, mapping_id,
+            )
+            return jsonify({
+                "message": "Proposal submitted successfully and is pending admin review.",
+                "proposal_id": proposal_id,
+            }), 200
+        return jsonify({"error": "Failed to create proposal"}), 500
+
+    except Exception as e:
+        logger.error("Error saving GO proposal: %s", e)
+        return jsonify({"error": "Failed to save proposal"}), 500
+
+
+@api_bp.route("/submit_reactome_proposal", methods=["POST"])
+@login_required
+@submission_rate_limit
+def submit_reactome_proposal():
+    """Save a deletion proposal against an existing KE-Reactome mapping.
+
+    Feeds the /admin/reactome-proposals review queue (issue #197). Reactome
+    mappings have no connection type and their confidence is locked at proposal
+    creation (D-02), so the only correction a change proposal can carry is a
+    request to retire (delete) the mapping.
+    """
+    try:
+        proposal_data = {
+            "entry": request.form.get("entry"),
+            "userName": request.form.get("userName"),
+            "userEmail": request.form.get("userEmail"),
+            "userAffiliation": request.form.get("userAffiliation"),
+            "deleteEntry": request.form.get("deleteEntry", ""),
+        }
+
+        is_valid, validated_data, errors = validate_request_data(
+            ReactomeProposalChangeSchema, proposal_data
+        )
+        if not is_valid:
+            logger.warning("Invalid Reactome change proposal request: %s", errors)
+            return jsonify({"error": "Invalid input data", "details": errors}), 400
+
+        entry_data = validated_data["entry"]
+        user_name = SecurityValidation.sanitize_string(validated_data["userName"])
+        user_email = validated_data["userEmail"]
+        user_affiliation = SecurityValidation.sanitize_string(
+            validated_data["userAffiliation"]
+        )
+        proposed_delete = validated_data["deleteEntry"] == "on"
+
+        if not proposed_delete:
+            return jsonify({"error": "No changes specified."}), 400
+
+        if not SecurityValidation.validate_email_domain(user_email):
+            return jsonify({"error": "Invalid email domain."}), 400
+
+        entry_dict, ke_id, reactome_id = _parse_change_proposal_entry(
+            entry_data, ("reactome_id", "reactomeId")
+        )
+        if entry_dict is None:
+            return jsonify({"error": "Could not parse entry data."}), 400
+        if not ke_id or not reactome_id:
+            return jsonify({"error": "Invalid entry data format."}), 400
+
+        if not reactome_proposal_model:
+            return jsonify({"error": "Reactome mapping service unavailable"}), 503
+
+        mapping_id = reactome_proposal_model.find_mapping_by_details(ke_id, reactome_id)
+        if not mapping_id:
+            return jsonify({"error": "Original mapping not found."}), 404
+
+        provider_username = session.get("user", {}).get("username", "unknown")
+
+        proposal_id = reactome_proposal_model.create_proposal(
+            mapping_id=mapping_id,
+            user_name=user_name,
+            user_email=user_email,
+            user_affiliation=user_affiliation,
+            provider_username=provider_username,
+            proposed_delete=proposed_delete,
+            ke_id=ke_id,
+            ke_title=entry_dict.get("ke_title"),
+            reactome_id=reactome_id,
+            pathway_name=entry_dict.get("pathway_name"),
+        )
+
+        if proposal_id:
+            logger.info(
+                "Created Reactome change proposal %s by %s for mapping %s",
+                proposal_id, provider_username, mapping_id,
+            )
+            return jsonify({
+                "message": "Proposal submitted successfully and is pending admin review.",
+                "proposal_id": proposal_id,
+            }), 200
+        return jsonify({"error": "Failed to create proposal"}), 500
+
+    except Exception as e:
+        logger.error("Error saving Reactome proposal: %s", e)
         return jsonify({"error": "Failed to save proposal"}), 500
 
 

@@ -77,6 +77,8 @@
                             {% for proposal in proposals %}
                             <tr data-proposal-id="{{ proposal.id }}"
                                 data-status="{{ proposal.status|e }}"
+                                data-mapping-id="{{ proposal.mapping_id if proposal.mapping_id else '' }}"
+                                data-proposed-delete="{{ 1 if proposal.proposed_delete else 0 }}"
                                 data-ke-id="{{ proposal.ke_id|e }}"
                                 data-ke-title="{{ proposal.ke_title|e }}"
                                 data-pathway-id="{{ proposal.reactome_id|e }}"
@@ -105,8 +107,14 @@
                                     </div>
                                 </td>
                                 <td>
-                                    <div>Species: <strong>{{ proposal.species or 'Homo sapiens' }}</strong></div>
-                                    <div>Confidence: <strong>{{ proposal.new_pair_confidence_level or proposal.proposed_confidence }}</strong></div>
+                                    {% if proposal.mapping_id and proposal.proposed_delete %}
+                                        <span class="badge-status-low">Deletion requested</span>
+                                    {% else %}
+                                        {% if proposal.mapping_id %}<div><em>Change to existing</em></div>{% endif %}
+                                        <div>Species: <strong>{{ proposal.species or 'Homo sapiens' }}</strong></div>
+                                        {% set _conf = proposal.new_pair_confidence_level or proposal.proposed_confidence %}
+                                        {% if _conf %}<div>Confidence: <strong>{{ _conf }}</strong></div>{% endif %}
+                                    {% endif %}
                                 </td>
                                 <td>
                                     <div><strong>{{ proposal.provider_username or proposal.user_name or '—' }}</strong></div>

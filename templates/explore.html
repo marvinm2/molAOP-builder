@@ -99,6 +99,7 @@
                         <th>Proposer</th>
                         <th>Last updated</th>
                         <th>AOP context</th>
+                        <th class="no-export">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -113,6 +114,15 @@
                         <td>{{ row['proposed_by']|display_username if row['proposed_by'] else '-' }}</td>
                         <td>{{ (row['created_at'] or '')[:10] or '-' }}</td>
                         <td>{% set aop_entries = ke_aop_membership.get(row['ke_id'], []) %}{% if aop_entries %}{{ aop_entries | map(attribute='aop_id') | list | join(', ') }}{% else %}-{% endif %}</td>
+                        <td>
+                            <button type="button" class="propose-change-go btn-sm"
+                                    data-ke-id="{{ row['ke_id']|e }}"
+                                    data-ke-title="{{ row['ke_title']|e }}"
+                                    data-go-id="{{ row['go_id']|e }}"
+                                    data-go-name="{{ row['go_name']|e }}"
+                                    data-connection-type="{{ row['connection_type']|e }}"
+                                    data-confidence="{{ row['confidence_level']|e }}">Propose Change</button>
+                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -151,6 +161,7 @@
                         <th>Curator</th>
                         <th>Last updated</th>
                         <th>AOP context</th>
+                        <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody></tbody>
@@ -183,7 +194,7 @@
                 <input type="checkbox" id="deleteEntry" name="proposedChange" value="delete">
                 <label for="deleteEntry">Recommend deletion of this mapping entry</label>
             </div>
-            <div>
+            <div id="confidenceBlock">
                 <label><strong>Update Confidence Level:</strong></label><br>
                 <input type="radio" id="confidenceHigh" name="changeConfidence" value="high">
                 <label for="confidenceHigh">High Confidence</label><br>
@@ -192,7 +203,7 @@
                 <input type="radio" id="confidenceLow" name="changeConfidence" value="low">
                 <label for="confidenceLow">Low Confidence</label>
             </div>
-            <div>
+            <div id="connectionTypeBlock">
                 <label><strong>Update Connection Type:</strong></label><br>
                 <input type="radio" id="typeCausative" name="changeType" value="causative">
                 <label for="typeCausative">Causative (Pathway causes KE)</label><br>
@@ -468,16 +479,26 @@
                         $('#goDatasetTable').DataTable(
                             DataTableConfig.merge('withFullExport', {
                                 order: [[7, 'desc']],
+                                // Keep the Actions button column (last) out of
+                                // CSV/Excel/PDF exports — otherwise button HTML
+                                // leaks into the file (issue #197).
+                                buttons: [
+                                    { extend: 'csvHtml5', exportOptions: { columns: ':not(.no-export)' } },
+                                    { extend: 'excelHtml5', exportOptions: { columns: ':not(.no-export)' } },
+                                    { extend: 'pdfHtml5', exportOptions: { columns: ':not(.no-export)' } },
+                                    'print'
+                                ],
                                 columnDefs: [
                                     { width: '8%',  targets: 0, className: 'dt-center' },
-                                    { width: '18%', targets: 1, className: 'dt-center' },
-                                    { width: '9%',  targets: 2, className: 'dt-center' },
-                                    { width: '21%', targets: 3, className: 'dt-center' },
-                                    { width: '10%', targets: 4, className: 'dt-center' },
-                                    { width: '10%', targets: 5, className: 'dt-center' },
-                                    { width: '10%', targets: 6, className: 'dt-center' },
-                                    { width: '9%',  targets: 7, className: 'dt-center' },
-                                    { width: '5%',  targets: 8, className: 'dt-center' }
+                                    { width: '16%', targets: 1, className: 'dt-center' },
+                                    { width: '8%',  targets: 2, className: 'dt-center' },
+                                    { width: '19%', targets: 3, className: 'dt-center' },
+                                    { width: '9%',  targets: 4, className: 'dt-center' },
+                                    { width: '9%',  targets: 5, className: 'dt-center' },
+                                    { width: '9%',  targets: 6, className: 'dt-center' },
+                                    { width: '8%',  targets: 7, className: 'dt-center' },
+                                    { width: '6%',  targets: 8, className: 'dt-center' },
+                                    { width: '8%',  targets: 9, className: 'dt-center', orderable: false }
                                 ]
                             })
                         );
@@ -539,7 +560,18 @@
                                 { data: 'provenance.approved_at', defaultContent: '-',
                                   render: function(d) { return d ? d.split('T')[0] : '-'; } },
                                 { data: 'ke_id', defaultContent: '-',
-                                  render: function(data) { return getAopContext(data); } }
+                                  render: function(data) { return getAopContext(data); } },
+                                { data: null, orderable: false,
+                                  render: function(data, type, row) {
+                                      var esc = function(v) { return $('<span>').text(v == null ? '' : v).html(); };
+                                      return '<button type="button" class="propose-change-reactome btn-sm"'
+                                          + ' data-ke-id="' + esc(row.ke_id) + '"'
+                                          + ' data-ke-title="' + esc(row.ke_name) + '"'
+                                          + ' data-reactome-id="' + esc(row.reactome_id) + '"'
+                                          + ' data-pathway-name="' + esc(row.pathway_name) + '"'
+                                          + ' data-confidence="' + esc(row.confidence_level) + '">Propose Change</button>';
+                                  }
+                                }
                             ]
                         });
                         reactomeTableInitialized = true;
@@ -626,14 +658,28 @@
                 applyReactomeFilters();
             });
 
-            // Propose Change modal - event delegation for AJAX-rendered rows
-            $('#datasetTable').on('click', '.propose-change', function() {
-                var rowData = wpTable.row($(this).closest('tr')).data();
-                var entry = rowData || {};
+            // Propose Change modal — shared opener across all three mapping
+            // types (wp | go | reactome). mappingType routes the submission to
+            // the matching endpoint and toggles resource-specific fields.
+            function openProposalModal(entry, mappingType) {
+                var formEl = document.getElementById('proposalForm');
+                if (formEl) { formEl.reset(); }
                 $("#entryDetails").val(JSON.stringify(entry, null, 2));
+
+                // Reactome mappings have no connection type and their
+                // confidence is locked (D-02), so the only correction offered
+                // is deletion — hide both revision blocks. GO/WP keep them.
+                if (mappingType === 'reactome') {
+                    $('#connectionTypeBlock').hide();
+                    $('#confidenceBlock').hide();
+                } else {
+                    $('#connectionTypeBlock').show();
+                    $('#confidenceBlock').show();
+                }
 
                 var isLoggedIn = document.body.getAttribute('data-is-logged-in') === 'true';
                 $("#proposalForm").data("entry", entry);
+                $("#proposalForm").data("mappingType", mappingType);
 
                 if (!isLoggedIn) {
                     if (!$("#proposalModal .login-prompt").length) {
@@ -648,6 +694,37 @@
 
                 $("#proposalModal").show();
                 $("#modalOverlay").show();
+            }
+
+            // KE-WP: row data is the AJAX object held by the DataTable.
+            $('#datasetTable').on('click', '.propose-change', function() {
+                var entry = wpTable.row($(this).closest('tr')).data() || {};
+                openProposalModal(entry, 'wp');
+            });
+
+            // KE-GO: entry built from the server-rendered button's data-* attrs.
+            $('#goDatasetTable').on('click', '.propose-change-go', function() {
+                var b = $(this);
+                openProposalModal({
+                    ke_id: b.data('ke-id'),
+                    ke_title: b.data('ke-title'),
+                    go_id: b.data('go-id'),
+                    go_name: b.data('go-name'),
+                    connection_type: b.data('connection-type'),
+                    confidence_level: b.data('confidence')
+                }, 'go');
+            });
+
+            // KE-Reactome: entry built from the AJAX-rendered button's data-* attrs.
+            $('#reactomeDatasetTable').on('click', '.propose-change-reactome', function() {
+                var b = $(this);
+                openProposalModal({
+                    ke_id: b.data('ke-id'),
+                    ke_title: b.data('ke-title'),
+                    reactome_id: b.data('reactome-id'),
+                    pathway_name: b.data('pathway-name'),
+                    confidence_level: b.data('confidence')
+                }, 'reactome');
             });
 
             $("#modalOverlay").on("click", closeModal);
@@ -664,11 +741,17 @@
 
                 var form = $(this);
                 var entryData = form.data("entry");
+                var mappingType = form.data("mappingType") || 'wp';
 
                 if (!entryData) {
                     alert("Error: No entry data found");
                     return;
                 }
+
+                // Route to the resource-specific proposal endpoint (issue #197).
+                var submitUrl = mappingType === 'go' ? '/submit_go_proposal'
+                              : mappingType === 'reactome' ? '/submit_reactome_proposal'
+                              : '/submit_proposal';
 
                 var formData = new FormData();
                 formData.append('entry', JSON.stringify(entryData));
@@ -678,10 +761,13 @@
                 formData.append('csrf_token', $('input[name="csrf_token"]').val());
                 formData.append('deleteEntry', $('#deleteEntry').is(':checked') ? 'on' : '');
                 formData.append('changeConfidence', $('input[name="changeConfidence"]:checked').val() || '');
-                formData.append('changeType', $('input[name="changeType"]:checked').val() || '');
+                // Reactome has no connection type; only send changeType for wp/go.
+                if (mappingType !== 'reactome') {
+                    formData.append('changeType', $('input[name="changeType"]:checked').val() || '');
+                }
 
                 $.ajax({
-                    url: '/submit_proposal',
+                    url: submitUrl,
                     method: 'POST',
                     data: formData,
                     processData: false,

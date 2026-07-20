@@ -217,8 +217,23 @@ var AdminProposals = (function () {
             created_at: $row.data('created-at') || '',
             admin_notes: $row.data('admin-notes') || '',
             uuid: $row.data('uuid') || '',
+            // Issue #197: change/deletion proposals target an existing mapping.
+            mapping_id: $row.data('mapping-id') || null,
+            proposed_delete: $row.data('proposed-delete') || 0,
             _from_row: true
         };
+    }
+
+    // A proposal is a deletion / change request (vs a new-pair proposal) when
+    // it targets an existing mapping. proposed_delete arrives as 1/0, true/false
+    // or "1"/"0" depending on the source (row data-* vs JSON detail endpoint).
+    function _isDeletionProposal(p) {
+        var d = p.proposed_delete;
+        return d === true || d === 1 || d === '1';
+    }
+    function _isChangeProposal(p) {
+        var m = p.mapping_id;
+        return !_isDeletionProposal(p) && m != null && m !== '' && m !== 0 && m !== '0';
     }
 
     function _fetchAndRenderPanel(id) {
@@ -292,6 +307,20 @@ var AdminProposals = (function () {
                    '<h4 style="margin-bottom:8px;font-size:14px;">Assessment</h4>' + body + '</div>';
         }());
 
+        // Issue #197: banner distinguishing deletion / change-to-existing
+        // proposals from new-pair proposals so curators know the approval
+        // effect before they act.
+        var changeBannerHtml = '';
+        if (_isDeletionProposal(proposal)) {
+            changeBannerHtml = '<div style="margin-bottom:12px;padding:8px 10px;border-radius:4px;' +
+                'background:#fdecea;color:#8a1c12;font-weight:600;">Deletion requested &mdash; ' +
+                'approving removes this existing mapping.</div>';
+        } else if (_isChangeProposal(proposal)) {
+            changeBannerHtml = '<div style="margin-bottom:12px;padding:8px 10px;border-radius:4px;' +
+                'background:#fff4e5;color:#7a4b00;font-weight:600;">Change to an existing mapping &mdash; ' +
+                'approving updates it in place.</div>';
+        }
+
         // Status-specific actions
         var actionsHtml = '';
         if (isPending) {
@@ -311,6 +340,9 @@ var AdminProposals = (function () {
             '<h4 style="margin:0;font-size:15px;color:var(--color-primary-dark,#29235C);">Proposal #' + escapeHtml(String(proposal.id || '')) + '</h4>' +
             '<span class="status-' + escapeHtml(proposal.status || '') + '">' + escapeHtml(proposal.status || '') + '</span>' +
             '</div>' +
+
+            // Deletion / change banner (issue #197)
+            changeBannerHtml +
 
             // Mapping info
             '<div style="margin-bottom:12px;">' +

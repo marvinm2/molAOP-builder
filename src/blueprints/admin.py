@@ -616,10 +616,15 @@ def admin_go_proposal_detail(proposal_id: int):
 @submission_rate_limit
 def approve_go_proposal(proposal_id: int):
     """
-    Approve a KE-GO proposal: create the live mapping and write provenance.
+    Approve a KE-GO proposal and apply it to the live data.
 
-    Only handles new-pair proposals (mapping_id IS NULL). All GO proposals
-    submitted via /submit_go_mapping are new-pair proposals.
+    Handles three proposal kinds:
+      * deletion  (proposed_delete): remove the existing mapping;
+      * revision  (mapping_id set):  update the existing mapping's
+                                     confidence / connection type;
+      * new-pair  (mapping_id NULL): create a fresh mapping.
+    Deletion and revision proposals arrive via /submit_go_proposal (issue
+    #197); new-pair proposals via /submit_go_mapping.
     """
     try:
         admin_data = {"admin_notes": request.form.get("admin_notes", "")}
@@ -647,8 +652,60 @@ def approve_go_proposal(proposal_id: int):
         if proposal["status"] != "pending":
             return jsonify({"error": f"GO proposal is already {proposal['status']}"}), 400
 
-        # All GO proposals are new-pair proposals (mapping_id IS NULL)
-        # Revision/delete branches are not yet supported for GO mappings.
+        # Issue #197: deletion / revision branches for change proposals raised
+        # against an existing approved mapping (mapping_id set). New-pair
+        # proposals (mapping_id NULL) fall through to the create path below.
+        mapping_id = proposal.get("mapping_id")
+        if proposal.get("proposed_delete"):
+            if not mapping_id:
+                return jsonify({"error": "Deletion proposal has no target mapping"}), 400
+            if not go_mapping_model.delete_mapping(mapping_id, admin_username):
+                return jsonify({"error": "Failed to delete GO mapping"}), 500
+            go_proposal_model.update_go_proposal_status(
+                proposal_id=proposal_id,
+                status="approved",
+                admin_username=admin_username,
+                admin_notes=admin_notes,
+            )
+            logger.info(
+                "GO proposal %s approved by %s, mapping %s deleted",
+                sanitize_log(proposal_id), sanitize_log(admin_username), sanitize_log(mapping_id),
+            )
+            return jsonify({
+                "message": "GO proposal approved successfully. Mapping deleted.",
+                "action": "deleted",
+            }), 200
+
+        if mapping_id:
+            approved_at = datetime.utcnow().isoformat()
+            # NB: no updated_by — the ke_go_mappings schema has no such column
+            # (unlike WP mappings); attribution rides on approved_by_curator.
+            success = go_mapping_model.update_go_mapping(
+                mapping_id=mapping_id,
+                connection_type=proposal.get("proposed_connection_type"),
+                confidence_level=proposal.get("proposed_confidence"),
+                approved_by_curator=admin_username,
+                approved_at_curator=approved_at,
+                proposed_by=proposal.get("provider_username"),
+            )
+            if not success:
+                return jsonify({"error": "Failed to update GO mapping"}), 500
+            go_proposal_model.update_go_proposal_status(
+                proposal_id=proposal_id,
+                status="approved",
+                admin_username=admin_username,
+                admin_notes=admin_notes,
+            )
+            logger.info(
+                "GO proposal %s approved by %s, mapping %s updated",
+                sanitize_log(proposal_id), sanitize_log(admin_username), sanitize_log(mapping_id),
+            )
+            return jsonify({
+                "message": "GO proposal approved successfully. Mapping updated.",
+                "action": "updated",
+            }), 200
+
+        # New-pair proposal (mapping_id IS NULL)
         approved_at = datetime.utcnow().isoformat()
         proposal_score = proposal.get("suggestion_score")
 
@@ -858,10 +915,12 @@ def admin_reactome_proposal_detail(proposal_id: int):
 @submission_rate_limit
 def approve_reactome_proposal(proposal_id: int):
     """
-    Approve a Reactome proposal: create the live mapping and write provenance.
+    Approve a Reactome proposal and apply it to the live data.
 
-    All Reactome proposals are new-pair (mapping_id IS NULL). Confidence is
-    straight pass-through from proposal -> mapping (D-02). No dimension scores.
+    Handles deletion (proposed_delete) and confidence-revision proposals
+    raised against an existing mapping (mapping_id set, issue #197), plus the
+    original new-pair path (mapping_id NULL) where confidence is straight
+    pass-through from proposal -> mapping (D-02).
     """
     try:
         admin_data = {"admin_notes": request.form.get("admin_notes", "")}
@@ -891,6 +950,39 @@ def approve_reactome_proposal(proposal_id: int):
             return jsonify({"error": f"Reactome proposal is already {proposal['status']}"}), 400
 
         approved_at = datetime.utcnow().isoformat()
+
+        # Issue #197: deletion / confidence-revision branches for change
+        # proposals against an existing mapping (mapping_id set). New-pair
+        # proposals (mapping_id NULL) fall through to the create path below.
+        mapping_id = proposal.get("mapping_id")
+        if proposal.get("proposed_delete"):
+            if not mapping_id:
+                return jsonify({"error": "Deletion proposal has no target mapping"}), 400
+            if not reactome_mapping_model.delete_mapping(mapping_id):
+                return jsonify({"error": "Failed to delete Reactome mapping"}), 500
+            reactome_proposal_model.update_proposal_status(
+                proposal_id=proposal_id,
+                status="approved",
+                admin_username=admin_username,
+                admin_notes=admin_notes,
+            )
+            logger.info(
+                "Reactome proposal %s approved by %s, mapping %s deleted",
+                sanitize_log(proposal_id), sanitize_log(admin_username), sanitize_log(mapping_id),
+            )
+            return jsonify({
+                "message": "Reactome proposal approved successfully. Mapping deleted.",
+                "action": "deleted",
+            }), 200
+
+        if mapping_id:
+            # Reactome confidence is locked at proposal creation (D-02) and
+            # Reactome has no connection type, so a non-deletion change against
+            # an existing mapping has nothing to apply. /submit_reactome_proposal
+            # only creates deletion proposals, so this is a defensive guard.
+            return jsonify({
+                "error": "Reactome change proposals support deletion only",
+            }), 400
 
         # Phase 25 review H-1: write the mapping in one INSERT with every
         # carry-field populated up front (eliminates the create_mapping +
