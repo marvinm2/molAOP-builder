@@ -1,15 +1,23 @@
-# KE-WP Mapping Application
+# Molecular AOP Builder
 
-[![CI/CD Pipeline](https://github.com/marvinm2/KE-WP-mapping/actions/workflows/ci.yml/badge.svg)](https://github.com/marvinm2/KE-WP-mapping/actions/workflows/ci.yml)
-[![Docker Build & Test](https://github.com/marvinm2/KE-WP-mapping/actions/workflows/docker.yml/badge.svg)](https://github.com/marvinm2/KE-WP-mapping/actions/workflows/docker.yml)
-[![Code Quality](https://github.com/marvinm2/KE-WP-mapping/actions/workflows/code-quality.yml/badge.svg)](https://github.com/marvinm2/KE-WP-mapping/actions/workflows/code-quality.yml)
-[![Security & Compliance](https://github.com/marvinm2/KE-WP-mapping/actions/workflows/security.yml/badge.svg)](https://github.com/marvinm2/KE-WP-mapping/actions/workflows/security.yml)
+[![CI/CD Pipeline](https://github.com/marvinm2/molAOP-builder/actions/workflows/ci.yml/badge.svg)](https://github.com/marvinm2/molAOP-builder/actions/workflows/ci.yml)
+[![Docker Build & Test](https://github.com/marvinm2/molAOP-builder/actions/workflows/docker.yml/badge.svg)](https://github.com/marvinm2/molAOP-builder/actions/workflows/docker.yml)
+[![Code Quality](https://github.com/marvinm2/molAOP-builder/actions/workflows/code-quality.yml/badge.svg)](https://github.com/marvinm2/molAOP-builder/actions/workflows/code-quality.yml)
+[![Security & Compliance](https://github.com/marvinm2/molAOP-builder/actions/workflows/security.yml/badge.svg)](https://github.com/marvinm2/molAOP-builder/actions/workflows/security.yml)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20184643.svg)](https://doi.org/10.5281/zenodo.20184643)
 
-A modern Flask-based web application for mapping Key Events (KEs) to WikiPathways (WPs) and Gene Ontology Biological Process (GO BP) terms with comprehensive metadata management. Built with a modular blueprint architecture for enhanced maintainability and scalability.
+Curator-in-the-loop tooling for building **molecular Adverse Outcome Pathways** — the
+layer that connects the Key Events of an AOP to the molecular pathways and processes
+that underlie them.
 
 **Live instance:** https://molaop-builder.vhp4safety.nl
 **Public REST API:** https://molaop-builder.vhp4safety.nl/api/docs
+
+> **Note on the name.** This repository was previously `KE-WP-mapping`, from when it
+> mapped Key Events to WikiPathways only. It now covers three target resources and a
+> full curation, review, publication and analysis pipeline, so it is named after the
+> tool it holds. GitHub redirects the old URLs; the deployed service, the container
+> image (`ghcr.io/marvinm2/molaop-builder`) and the public API are unchanged.
 
 ## What is this?
 
@@ -25,17 +33,20 @@ exportable as GMT (for fgsea/clusterProfiler) and RDF/TTL (for SPARQL).
 
 ### Core Functionality
 
-- **KE-WP Mapping**: Create relationships between Key Events and WikiPathways with connection types and confidence levels
-- **KE-GO Mapping**: Map Key Events to Gene Ontology Biological Process (BP) terms with gene-based and semantic scoring
-- **Pure-semantic Pathway Suggestions** (v1.5, 2026-05-10): Pathways are ranked
-  by BioBERT semantic similarity between the KE description and pathway
-  metadata. Gene overlap is computed and shown to curators on each card as
-  an informational chip but does **not** influence ordering. See
-  `CHANGELOG.md` v2.7.0 and `docs/SCORING_CONFIG.md`.
-- **GO Term Suggestions**: Same pure-semantic approach over ~30K GO BP terms,
-  enriched with IC-based specificity boost and ancestor redundancy filtering
-  using a precomputed GO hierarchy (24K+ BP terms).
-- **GO Hierarchy Integration**: IC-based specificity boost and ancestor redundancy filtering using precomputed GO hierarchy (24K+ BP terms)
+- **Three mapping resources**: Key Events can be mapped to **WikiPathways** pathways,
+  **Gene Ontology** Biological Process and Molecular Function terms, and **Reactome**
+  pathways — each with its own suggestion corpus, curation tab, proposal queue and export.
+- **Pure-semantic suggestions** (v1.5, 2026-05-10): candidates on all three resources are
+  ranked by BioBERT semantic similarity between the Key Event and the target's metadata.
+  Gene overlap is computed and shown to curators on each card as an informational chip but
+  does **not** influence ordering. See `CHANGELOG.md` v2.7.0 and `docs/SCORING_CONFIG.md`.
+- **GO hierarchy handling**: a precomputed GO hierarchy (24K+ BP terms) drives ancestor
+  **redundancy filtering** — an ancestor term is pruned when a descendant is also
+  suggested, unless it is the term the KE title actually names — and supplies the term
+  depth shown on each card. The information-content specificity boost is present in the
+  code but **disabled by default** (`ic_weight: 0.0`); under pure-semantic ranking it
+  promoted over-specific terms above the umbrella term a generic KE calls for. See the
+  "GO Hierarchy" section of `docs/SCORING_CONFIG.md`.
 - **KE-Centric GMT Exports**: Gene union across all approved mappings per KE for fgsea/clusterProfiler
 - **Proposer Provenance**: Every approved mapping records the submitting curator's identity
 - **Streamlined Confidence Assessment**: 4-question guided workflow with biological level weighting:
@@ -46,9 +57,22 @@ exportable as GMT (for fgsea/clusterProfiler) and RDF/TTL (for SPARQL).
   - Edit previous answers with automatic recalculation of subsequent steps
   - Real-time score calculation and detailed feedback
 - **Data Exploration**: Interactive, searchable dataset browser with advanced filtering
-- **Proposal System**: Community-driven change proposals with admin review workflow
+- **Proposal System**: Community-driven change proposals with admin review workflow, on all
+  three resources — submit a new pair, propose a deletion, or revise an existing mapping.
+  Admins review per-resource queues and can bulk-approve in a single transaction.
+- **AOP Explorer**: Interactive AOP graph (`/aop-explorer`) showing each Key Event's
+  position between its Molecular Initiating Event and Adverse Outcome, with per-resource
+  coverage indicators on every KE node, OECD development-status filtering, and gap filters
+  that highlight where curation is still missing.
 - **Real-time SPARQL Integration**: Live data from AOP-Wiki and WikiPathways endpoints
-- **Export Capabilities**: Download datasets in multiple formats
+- **Versioned public REST API**: `/api/v1` serves approved mappings for all three resources
+  with pagination, filtering and JSON/CSV output, documented by an OpenAPI spec and Swagger
+  UI. Consumed by the [Molecular AOP Analyser](https://molaop-analyser.vhp4safety.nl).
+- **Export Capabilities**: Per-resource and KE-centric GMT (split by confidence tier),
+  RDF/Turtle with full curation provenance, plus CSV, TSV, JSON and Excel.
+- **Citable releases**: The curated dataset is deposited to Zenodo under a persistent
+  concept DOI ([10.5281/zenodo.20184643](https://doi.org/10.5281/zenodo.20184643)) that
+  always resolves to the latest version, released CC0. See `docs/RELEASES.md`.
 
 ### User Experience Enhancements
 
@@ -126,8 +150,8 @@ All workflows run automatically on push to main branch and can be triggered manu
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/marvinm2/KE-WP-mapping.git
-   cd KE-WP-mapping
+   git clone https://github.com/marvinm2/molAOP-builder.git
+   cd molAOP-builder
    ```
 
 2. **Create a virtual environment:**
@@ -471,7 +495,7 @@ chmod +x start.sh
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/marvinm2/KE-WP-mapping/issues)
+- **Issues**: [GitHub Issues](https://github.com/marvinm2/molAOP-builder/issues)
 - **Documentation**: This README and inline code documentation
 - **Data Management Plan**: [`docs/DMP.md`](docs/DMP.md) (Horizon Europe / Science Europe template)
 - **Release Runbook**: [`docs/RELEASES.md`](docs/RELEASES.md) (how to cut a new Zenodo version)
