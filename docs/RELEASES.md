@@ -88,7 +88,7 @@ flip it on:
 
 ## Known limitations
 
-These are tracked under GitHub [issue #158](https://github.com/marvinm2/KE-WP-mapping/issues/158):
+These are tracked under GitHub [issue #158](https://github.com/marvinm2/molAOP-builder/issues/158):
 
 - **`data/zenodo_meta.json` write may fall back to `/tmp/`** if the container uid
   doesn't match the host owner of the gluster mount. The `Dockerfile` now accepts

@@ -54,6 +54,22 @@
     <li>Original mapping remains unchanged</li>
 </ol>
 
+<h4>Bulk Approval</h4>
+<p>All three proposal queues support approving many proposals at once. Tick the checkboxes on
+the rows you want, review the selection in the side panel, and confirm.</p>
+<p>The whole batch is applied in a <strong>single database transaction</strong>: if any one
+proposal in the selection fails, the entire batch is rolled back and nothing is applied. This
+is deliberate &mdash; a partially-applied batch would leave the queue in a state that is hard
+to reason about. Each approval is written to the audit log individually, so bulk approval is
+just as traceable as approving one at a time.</p>
+
+<div class="info-box">
+    <strong>Tip:</strong> bulk approve is most useful after a curation workshop, when a
+    single trusted curator has submitted a run of mappings. Spot-check a sample rather than
+    approving a large batch unseen &mdash; approval is what publishes a mapping to the public
+    API.
+</div>
+
 <h3>KE-GO Proposal Management</h3>
 <p>GO mapping proposals are managed separately. Access via the <strong>GO Proposals</strong> link on the admin page, or navigate directly to <code>/admin/go-proposals</code>.</p>
 <p>The workflow is the same as KE-WP proposals: review, approve (creates/updates GO mapping), or reject with notes.</p>
@@ -63,6 +79,30 @@
 <div class="info-box">
     <strong>Note:</strong> the curator-side Reactome tab shows an "under development" notice while suggestion thresholds are being calibrated. The proposal pipeline itself is fully functional.
 </div>
+
+<h3>Proposal types across the three queues</h3>
+<p>A queue contains more than new submissions. Deletion and revision proposals are badged in
+the table so they can be told apart from new pairs at a glance &mdash; worth noticing before
+bulk-approving, since approving a deletion proposal removes a published mapping.</p>
+
+<table>
+    <tr><th>Resource</th><th>New pair</th><th>Deletion</th><th>Change confidence</th><th>Change connection type</th></tr>
+    <tr><td>KE-WP</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td></tr>
+    <tr><td>KE-GO</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td></tr>
+    <tr><td>KE-Reactome</td><td>yes</td><td>yes</td><td>&mdash;</td><td>&mdash;</td></tr>
+</table>
+
+<p>The Reactome gaps are deliberate, not missing features: Reactome confidence is fixed when
+the proposal is created, and Reactome mappings carry no connection type, so the proposal modal
+hides both revision blocks for that resource.</p>
+
+<h3>KE Description Coverage</h3>
+<p>At <code>/admin/ke-descriptions</code> you can see which Key Events have usable
+descriptions in AOP-Wiki and toggle individual KEs out of description-based matching.</p>
+<p>This matters because suggestion quality depends on the KE text the embedding is computed
+from. When a KE's AOP-Wiki description is empty, boilerplate, or describes the assay rather
+than the biology, including it makes suggestions <em>worse</em> than using the title alone.
+Toggling that KE off falls back to title-only matching for it.</p>
 
 <h3>Guest Code Management</h3>
 <p>Workshop participants can log in with temporary access codes instead of GitHub OAuth. Manage codes at <strong>Guest Codes</strong> in the navigation or <code>/admin/guest-codes</code>.</p>
@@ -77,12 +117,34 @@
 <h4>Revoking Guest Codes</h4>
 <p>Click <strong>Revoke</strong> next to any active code to disable it immediately. Revoked codes cannot be used to log in.</p>
 
-<h3>Export & Publication</h3>
-<p>Admin users can regenerate export files and publish to Zenodo from the admin interface:</p>
+<h3>Exports &amp; Zenodo</h3>
+<p>The <strong>Exports &amp; Zenodo</strong> dashboard at <code>/admin/exports</code> shows
+the current live mapping counts beside the counts recorded in the last Zenodo deposit, so you
+can see at a glance how much curation has accumulated since the last release. It offers two
+actions:</p>
 <ul>
-    <li><strong>Regenerate exports</strong>: Rebuilds GMT and RDF files in <code>static/exports/</code></li>
-    <li><strong>Publish to Zenodo</strong>: Uploads the latest dataset to Zenodo for DOI assignment</li>
+    <li><strong>Regenerate Exports</strong> &mdash; rebuilds the cached GMT and Turtle files
+        that the <code>/exports/&hellip;</code> routes and the Downloads page serve. Safe to
+        run any time; it only touches the on-disk cache.</li>
+    <li><strong>Publish to Zenodo</strong> &mdash; mints a <em>new version</em> of the dataset
+        under the existing concept DOI. This is public and permanent, so the button asks for
+        confirmation first and disables itself while the request is in flight.</li>
 </ul>
+
+<div class="warning-box">
+    <strong>Publishing is irreversible.</strong> A Zenodo version cannot be withdrawn once
+    published, only superseded by a further version. Check the live-versus-deposited counts on
+    the dashboard first, and prefer releasing after a batch of curation has landed rather than
+    after every individual mapping.
+</div>
+
+<p>If the button is disabled with a warning, no Zenodo API token is configured on the
+container. The token is read from a Docker secret at
+<code>/run/secrets/zenodo_api_token</code>, or failing that from the
+<code>ZENODO_API_TOKEN</code> environment variable. The full install and rotation procedure
+is in <code>docs/RELEASES.md</code>; the equivalent command-line path is
+<code>scripts/publish_zenodo.py</code>, which also offers <code>--dry-run</code> to assemble a
+deposit without sending it.</p>
 
 <h3>Database Management</h3>
 <p>The application uses SQLite with automatic migrations on startup. The database is stored in the <code>data/</code> directory.</p>

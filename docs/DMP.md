@@ -3,7 +3,7 @@
 **Version:** 1.0
 **Date:** 2026-05-14
 **Author:** Marvin Martens — Department of Translational Genomics, Maastricht University · ORCID [0000-0003-2230-0840](https://orcid.org/0000-0003-2230-0840)
-**Project:** Molecular AOP Builder (`marvinm2/KE-WP-mapping`) · live instance at [molaop-builder.vhp4safety.nl](https://molaop-builder.vhp4safety.nl)
+**Project:** Molecular AOP Builder (`marvinm2/molAOP-builder`) · live instance at [molaop-builder.vhp4safety.nl](https://molaop-builder.vhp4safety.nl)
 **Template:** Horizon Europe / Science Europe core (six-section structure with FAIR sub-sections)
 **Scope:** the Molecular AOP Builder repository only. The downstream [Molecular AOP Analyser](https://molaop-analyser.vhp4safety.nl) consumes data via the Builder's REST API and is documented separately.
 
@@ -39,7 +39,7 @@ The curated mappings are open by default and accessible without authentication. 
 
 For bulk re-use and long-term citation, the same data are deposited to Zenodo, which provides ten-year preservation, DOIs, HTTPS resolution, and listed-in-OpenAIRE harvesting. Format-specific bulk downloads — CSV, JSON, GMT (for fgsea/clusterProfiler), RDF/Turtle, Parquet, and Excel — are available through the application's `/export/<format>` and `/exports/...` routes and are bundled into each Zenodo deposit. A dedicated bulk-snapshot URL serving the full dataset under a single canonical filename per release is planned (see §7).
 
-The Builder's source code is openly available on GitHub at `marvinm2/KE-WP-mapping` under the GPL-2.0 licence, as is the schema-level documentation in `docs/DATASET_DOCUMENTATION.md` and the live OpenAPI specification. No specialised software is required to read the data: CSV, JSON, GMT, and Turtle are all plain text, and Parquet is supported by Apache Arrow, pandas, R `arrow`, and DuckDB out of the box.
+The Builder's source code is openly available on GitHub at `marvinm2/molAOP-builder` under the GPL-2.0 licence, as is the schema-level documentation in `docs/DATASET_DOCUMENTATION.md` and the live OpenAPI specification. No specialised software is required to read the data: CSV, JSON, GMT, and Turtle are all plain text, and Parquet is supported by Apache Arrow, pandas, R `arrow`, and DuckDB out of the box.
 
 ### 2.3 Making data interoperable
 
@@ -59,7 +59,7 @@ Source-data versioning — that is, recording in each export which release of Wi
 
 ## 3. Other research outputs
 
-The Builder produces one substantial non-data research output: the application source code itself, distributed under the **GPL-2.0** licence and hosted at [`github.com/marvinm2/KE-WP-mapping`](https://github.com/marvinm2/KE-WP-mapping). Releases are tagged with semantic versions (currently `v2.7.2`) and accompanied by a Keep-a-Changelog-style `CHANGELOG.md`. Container images are published to `ghcr.io/marvinm2/molaop-builder` for amd64. The BioBERT-derived embedding assets in `data/` are derivative research outputs and are regeneratable from the public upstream OBO files and the BioBERT model checkpoint; they are versioned by their generation script and date and are bundled into the production container image. A scoring configuration (`scoring_config.yaml`, currently v1.5.0) and the OpenAPI specification (`static/openapi/openapi.yaml`) accompany the dataset as machine-readable artefacts.
+The Builder produces one substantial non-data research output: the application source code itself, distributed under the **GPL-2.0** licence and hosted at [`github.com/marvinm2/molAOP-builder`](https://github.com/marvinm2/molAOP-builder). Releases are tagged with semantic versions (currently `v2.7.2`) and accompanied by a Keep-a-Changelog-style `CHANGELOG.md`. Container images are published to `ghcr.io/marvinm2/molaop-builder` for amd64. The BioBERT-derived embedding assets in `data/` are derivative research outputs and are regeneratable from the public upstream OBO files and the BioBERT model checkpoint; they are versioned by their generation script and date and are bundled into the production container image. A scoring configuration (`scoring_config.yaml`, currently v1.5.0) and the OpenAPI specification (`static/openapi/openapi.yaml`) accompany the dataset as machine-readable artefacts.
 
 ---
 

@@ -26,6 +26,56 @@ curl "https://molaop-builder.vhp4safety.nl/api/v1/mappings?format=csv" -o mappin
     <li><code>format</code> - Response format: <code>json</code> (default) or <code>csv</code></li>
 </ul>
 
+<p><strong>Response shape:</strong> results are returned under <code>data</code>, with a
+<code>pagination</code> block carrying <code>page</code>, <code>per_page</code>,
+<code>total</code>, <code>total_pages</code> and ready-made <code>next</code> /
+<code>prev</code> URLs.</p>
+
+<pre><code>{
+  "data": [
+    {
+      "uuid": "ed70e647-51c4-48c7-9ea9-132c243bb562",
+      "ke_id": "KE 1790",
+      "ke_name": "Increased, Differentiation to Testis",
+      "ke_bio_level": "Tissue",
+      "ke_aop_context": ["AOP 346", "AOP 376"],
+      "pathway_id": "WP4842",
+      "pathway_title": "Mammalian disorder of sexual development",
+      "confidence_level": "high",
+      "connection_type": "other",
+      "assessment": {
+        "relationship": null, "basis": null,
+        "specificity": null, "coverage": null, "version": "v1"
+      },
+      "provenance": {
+        "proposed_by": "github:marvinm2",
+        "approved_by": "github:marvinm2",
+        "approved_at": "2026-07-18T12:18:49.000031",
+        "suggestion_score": null
+      }
+    }
+  ],
+  "pagination": { "page": 1, "per_page": 1, "total": 125, "total_pages": 125,
+                  "next": "...", "prev": null }
+}</code></pre>
+
+<h4>The <code>assessment</code> block</h4>
+<p>Every mapping carries the curator's answers to the four-question confidence rubric, so a
+consumer can see <em>why</em> a mapping received its confidence level rather than only the
+verdict. The same envelope is emitted by the WP, GO and Reactome serializers.</p>
+<ul>
+    <li><code>relationship</code> &mdash; how the KE and target relate (causative, responsive, &hellip;)</li>
+    <li><code>basis</code> &mdash; strength of the underlying evidence</li>
+    <li><code>specificity</code> &mdash; how tightly the target scopes to the KE</li>
+    <li><code>coverage</code> &mdash; how much of the KE the target accounts for</li>
+    <li><code>version</code> &mdash; <code>v2</code> when the rubric answers were captured at
+        submission; <code>v1</code> for mappings approved before the rubric was persisted at
+        column level, where the four answer fields are <code>null</code></li>
+</ul>
+<p>The envelope shape is identical for both versions, so a consumer never has to branch on
+its presence &mdash; only on <code>version</code> if the answers themselves are needed. The
+same five values are appended as columns in the CSV export.</p>
+
 <h4>GET /api/v1/mappings/&lt;uuid&gt;</h4>
 <p>Get a single KE-WP mapping by its UUID.</p>
 <pre><code>curl https://molaop-builder.vhp4safety.nl/api/v1/mappings/abc12345-...</code></pre>
@@ -85,15 +135,26 @@ curl "https://molaop-builder.vhp4safety.nl/api/v1/reactome-mappings?format=csv" 
 <p><strong>Response:</strong> JSON object with ranked suggestions</p>
 
 <h4>GET /search_pathways</h4>
-<p>Search for pathways with fuzzy matching.</p>
-<pre><code>curl "https://molaop-builder.vhp4safety.nl/search_pathways?query=apoptosis&limit=10"</code></pre>
+<p>Search for pathways by title or description with fuzzy matching. A query that is a
+WikiPathways identifier resolves directly to that pathway.</p>
+<pre><code>curl "https://molaop-builder.vhp4safety.nl/search_pathways?q=apoptosis&limit=10"
+curl "https://molaop-builder.vhp4safety.nl/search_pathways?q=WP554"</code></pre>
 
 <p><strong>Parameters:</strong></p>
 <ul>
-    <li><code>query</code> - Search term (required)</li>
-    <li><code>limit</code> - Max results (default: 10)</li>
-    <li><code>threshold</code> - Similarity threshold (default: 0.3)</li>
+    <li><code>q</code> - Search term (required)</li>
+    <li><code>limit</code> - Max results (default: 20, max: 100)</li>
+    <li><code>threshold</code> - Similarity threshold 0.1&ndash;1.0 (default: 0.4)</li>
 </ul>
+
+<div class="info-box">
+    <strong>Identifier lookup:</strong> a query matching a WikiPathways ID
+    (<code>WP554</code>, tolerating case and <code>:</code>/<code>-</code>/<code>_</code>
+    separators) returns that single pathway at relevance 1.0 rather than being fuzzy-matched
+    against titles. A <code>WP</code>-prefixed ID that is not in the corpus returns an empty
+    result set; a bare number is tried as an identifier and otherwise falls through to
+    fuzzy matching.
+</div>
 
 <h4>GET /suggest_go_terms/&lt;ke_id&gt;</h4>
 <p>Get GO Biological Process term suggestions for a specific Key Event, ranked by BioBERT semantic similarity (v1.5). Gene overlap is returned for display purposes but does not influence the ordering.</p>
@@ -102,9 +163,32 @@ curl "https://molaop-builder.vhp4safety.nl/api/v1/reactome-mappings?format=csv" 
 <p><strong>Response:</strong> JSON object with ranked GO term suggestions including scores and matched genes.</p>
 
 <h4>GET /search_go_terms</h4>
-<p>Search GO terms by name or GO ID (e.g. <code>GO:0006915</code>) with fuzzy matching.</p>
-<pre><code>curl "https://molaop-builder.vhp4safety.nl/search_go_terms?query=apoptosis&limit=10"
-curl "https://molaop-builder.vhp4safety.nl/search_go_terms?query=GO:0006915"</code></pre>
+<p>Search GO terms by name or GO ID with fuzzy matching. Searches both the Biological
+Process and Molecular Function namespaces; each result carries a <code>go_namespace</code>
+field of <code>BP</code> or <code>MF</code>.</p>
+<pre><code>curl "https://molaop-builder.vhp4safety.nl/search_go_terms?q=apoptosis&limit=10"
+curl "https://molaop-builder.vhp4safety.nl/search_go_terms?q=GO:0006915"</code></pre>
+
+<p><strong>Parameters:</strong> <code>q</code> (required), <code>limit</code> (default: 10),
+<code>threshold</code> (default: 0.4).</p>
+
+<p>A query matching a GO ID (<code>GO:0006915</code>, <code>go:0006915</code>,
+<code>GO_0006915</code>) resolves directly to that term at relevance 1.0.</p>
+
+<h4>GET /suggest_reactome/&lt;ke_id&gt;</h4>
+<p>Get Reactome pathway suggestions for a specific Key Event, using the same v1.5
+pure-semantic ranker as WikiPathways and GO.</p>
+<pre><code>curl https://molaop-builder.vhp4safety.nl/suggest_reactome/55</code></pre>
+
+<h4>GET /search_reactome</h4>
+<p>Search Reactome pathways by name or description. A query matching a Reactome stable
+identifier (<code>R-HSA-109581</code>, tolerating separators) resolves directly to that
+pathway.</p>
+<pre><code>curl "https://molaop-builder.vhp4safety.nl/search_reactome?q=apoptosis&limit=10"
+curl "https://molaop-builder.vhp4safety.nl/search_reactome?q=R-HSA-109581"</code></pre>
+
+<p><strong>Parameters:</strong> <code>q</code> (required), <code>limit</code> (default: 10),
+<code>threshold</code> (default: 0.4).</p>
 
 <h4>GET /ke_genes/&lt;ke_id&gt;</h4>
 <p>Get gene associations for a specific Key Event.</p>
@@ -138,6 +222,51 @@ curl https://molaop-builder.vhp4safety.nl/export/excel -o mappings.xlsx
 curl https://molaop-builder.vhp4safety.nl/export/rdf -o mappings.ttl</code></pre>
 
 <p><strong>Supported formats:</strong> <code>csv</code>, <code>tsv</code>, <code>json</code>, <code>excel</code>, <code>rdf</code></p>
+
+<h3>Per-resource GMT and RDF exports</h3>
+
+<p>These serve one resource at a time and are what the <a href="/downloads">/downloads</a>
+page links to. No authentication, no rate limit &mdash; they are static cached files
+regenerated when mappings change.</p>
+
+<h4>GMT gene sets</h4>
+<p>Two shapes per resource. The plain route emits <strong>one gene set per mapping</strong>;
+the <code>-centric</code> route emits <strong>one gene set per Key Event</strong>, taking the
+union of genes across all that KE's approved mappings in that resource. For KE-level
+enrichment with fgsea or clusterProfiler you almost always want the <code>-centric</code>
+variant &mdash; otherwise a KE mapped to four pathways contributes four competing sets.</p>
+
+<pre><code>curl https://molaop-builder.vhp4safety.nl/exports/gmt/ke-wp -o ke-wp.gmt
+curl https://molaop-builder.vhp4safety.nl/exports/gmt/ke-wp-centric -o ke-wp-centric.gmt
+
+# same pair for the other two resources
+curl https://molaop-builder.vhp4safety.nl/exports/gmt/ke-go -o ke-go.gmt
+curl https://molaop-builder.vhp4safety.nl/exports/gmt/ke-go-centric -o ke-go-centric.gmt
+curl https://molaop-builder.vhp4safety.nl/exports/gmt/ke-reactome -o ke-reactome.gmt
+curl https://molaop-builder.vhp4safety.nl/exports/gmt/ke-reactome-centric -o ke-reactome-centric.gmt</code></pre>
+
+<p>All six GMT routes accept an optional <code>min_confidence</code> filter
+(<code>high</code>, <code>medium</code> or <code>low</code>); omit it for every approved
+mapping regardless of tier.</p>
+
+<pre><code>curl "https://molaop-builder.vhp4safety.nl/exports/gmt/ke-wp-centric?min_confidence=high" -o ke-wp-high.gmt</code></pre>
+
+<h4>RDF / Turtle</h4>
+<p>Turtle serialisations carrying full curation provenance (proposer, approver, approval
+timestamp, confidence, and the assessment answers), suitable for SPARQL federation against
+AOP-Wiki RDF.</p>
+
+<pre><code>curl https://molaop-builder.vhp4safety.nl/exports/rdf/ke-wp -o ke-wp.ttl
+curl https://molaop-builder.vhp4safety.nl/exports/rdf/ke-go -o ke-go.ttl
+curl https://molaop-builder.vhp4safety.nl/exports/rdf/ke-reactome -o ke-reactome.ttl</code></pre>
+
+<div class="info-box">
+    <strong>Citing a fixed version:</strong> these endpoints always serve the current state
+    of the database. For a citable, frozen snapshot use the Zenodo deposit instead &mdash;
+    concept DOI <a href="https://doi.org/10.5281/zenodo.20184643" target="_blank" rel="noopener">10.5281/zenodo.20184643</a>
+    always resolves to the latest version, and each version bundles the same GMT and Turtle
+    files split by confidence tier. Released under CC0.
+</div>
 
 <h3>Authentication</h3>
 <p>The v1 public API requires no authentication. Internal mutation endpoints (POST /submit, POST /submit_go_mapping, POST /submit_reactome_mapping, POST /submit_proposal) require:</p>

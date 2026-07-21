@@ -194,7 +194,7 @@ def build_readme(
 
 **Published:** {today}
 **Source application:** https://molaop-builder.vhp4safety.nl
-**Repository:** https://github.com/marvinm2/KE-WP-mapping
+**Repository:** https://github.com/marvinm2/molAOP-builder
 **License:** CC0 1.0 Universal (public domain dedication)
 
 This deposit contains the current curated mappings between Key Events (KEs) of the Adverse Outcome Pathway framework and three molecular-pathway / ontology resources. Each mapping has been proposed by a curator, scored by a BioBERT-based suggestion engine, assessed against a structured confidence rubric, and approved by an administrator before inclusion in the dataset.
@@ -269,7 +269,7 @@ def build_metadata(today: str, source_versions: Optional[dict] = None) -> dict:
         description += f"Upstream snapshot for this deposit: {snapshot_line}. "
     description += (
         "Produced by the Molecular AOP Builder at https://molaop-builder.vhp4safety.nl ; "
-        "source at https://github.com/marvinm2/KE-WP-mapping ."
+        "source at https://github.com/marvinm2/molAOP-builder ."
     )
     return {
         "title": "Molecular AOP Builder — Curated KE → WikiPathways / GO / Reactome Mappings",

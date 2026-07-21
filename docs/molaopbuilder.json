@@ -6,13 +6,13 @@
 
 
   "_ins_id": "An id for the JSON file, needs to be the same name as this JSON file.",
-  "id": "ke-wp-mapping",
+  "id": "molaop-builder",
 
   "_ins_service": "// The (stylized) name of the service which will be shown as the name of the service in the catalog.",
   "service": "Molecular AOP Builder",
 
   "_ins_description": "A short description for the service.",
-  "description": "A web application for mapping Key Events from Adverse Outcome Pathways to WikiPathways and Gene Ontology Biological Process terms, using intelligent suggestions based on gene overlap, text similarity, and BioBERT semantic embeddings.",
+  "description": "A curator-in-the-loop web application for building molecular Adverse Outcome Pathways. Maps AOP Key Events to WikiPathways pathways, Gene Ontology Biological Process and Molecular Function terms, and Reactome pathways, with candidates ranked by BioBERT semantic similarity to the Key Event. Curators assign a confidence level through a structured rubric and an admin approves each mapping before it enters the public REST API; approved mappings are exportable as GMT, RDF/Turtle, CSV and JSON, and are deposited to Zenodo under a persistent concept DOI.",
 
   "_ins_stage": "Stage / place in the workflow categories",
   "stage": "",
@@ -21,16 +21,16 @@
   "substage": "",
 
   "_ins_screenshot": "The name of the file for the service logo, needs to be the same name as the service id but with a different extension.",
-  "screenshot": "ke-wp-mapping.png",
+  "screenshot": "molaop-builder.png",
 
   "_ins_url": "The original URL to the service.",
-  "url": "https://github.com/marvinm2/KE-WP-mapping",
+  "url": "https://github.com/marvinm2/molAOP-builder",
 
   "_ins_doi": "The DOI of the document (article, preprint, etc.) related to the service.",
   "doi": "",
 
   "_ins_release_notes": "A url where there are release notes regarding the service.",
-  "release_notes": "https://github.com/marvinm2/KE-WP-mapping/releases",
+  "release_notes": "https://github.com/marvinm2/molAOP-builder/releases",
 
   "instance": {
 
@@ -44,13 +44,13 @@
     "url": "molaop-builder.vhp4safety.nl",
 
     "license": "GPL-2.0",
-    "version": "2.3.0",
+    "version": "2.8.0",
 
     "ins_source": "Link to the source material of the service.",
-    "source": "https://github.com/marvinm2/KE-WP-mapping",
+    "source": "https://github.com/marvinm2/molAOP-builder",
 
     "_ins_docker": "Link to the repository with service's Docker container.",
-    "docker": "https://github.com/marvinm2/KE-WP-mapping",
+    "docker": "https://github.com/marvinm2/molAOP-builder",
 
     "_ins_TRL": "Technology Readiness Level. For details, please see: https://en.wikipedia.org/wiki/Technology_readiness_level",
     "TRL": ""
@@ -76,7 +76,7 @@
     "API": "REST",
 
     "_ins_login": "Whether the API requires authenication.",
-    "login": "true",
+    "login": "false",
 
     "packages": {
       "R": "",

@@ -155,8 +155,8 @@ if __name__ == "__main__":
 
 ```bash
 # Clone the repository
-git clone https://github.com/marvinm2/KE-WP-mapping.git
-cd KE-WP-mapping
+git clone https://github.com/marvinm2/molAOP-builder.git
+cd molAOP-builder
 
 # Configure environment
 cp .env.example .env
@@ -184,8 +184,8 @@ newgrp docker
 
 ```bash
 # Clone repository
-git clone https://github.com/marvinm2/KE-WP-mapping.git
-cd KE-WP-mapping
+git clone https://github.com/marvinm2/molAOP-builder.git
+cd molAOP-builder
 
 # Create production environment file
 cp .env.example .env

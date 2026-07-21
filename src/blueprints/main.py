@@ -303,8 +303,8 @@ def download():
             f"# Description: Curated mappings between Key Events and WikiPathways with confidence assessments\n"
         )
         output.write(f"# License: CC0 - Public Domain\n")
-        output.write(f"# Repository: https://github.com/marvinm2/KE-WP-mapping\n")
-        output.write(f"# Contact: Generated from KE-WP Mapping Service\n")
+        output.write(f"# Repository: https://github.com/marvinm2/molAOP-builder\n")
+        output.write(f"# Contact: Generated from the Molecular AOP Builder\n")
         output.write(f"#\n")
         output.write(f"# Column descriptions:\n")
         output.write(f"# - id: Unique identifier for the mapping\n")

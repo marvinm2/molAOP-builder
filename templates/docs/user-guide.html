@@ -24,9 +24,21 @@
 <h4>Step 2 (alternative): Select GO Term — KE-GO Mapping</h4>
 <p>To map a KE to a Gene Ontology Biological Process term, use the <strong>KE-GO Mapping</strong> tab. The system provides two sub-tabs:</p>
 <ul>
-    <li><strong>Suggested</strong> - GO BP term suggestions ranked by BioBERT semantic similarity (v1.5, 2026-05-10), enriched with IC-based specificity boost and ancestor redundancy filtering. Cards show GO term name, definition, matched genes (informational), and similarity score.</li>
-    <li><strong>Search</strong> - Search for GO terms by name or GO ID (e.g. <code>GO:0006915</code>)</li>
+    <li><strong>Suggested</strong> - GO BP term suggestions ranked by BioBERT semantic similarity (v1.5, 2026-05-10). Cards show GO term name, definition, matched genes (informational), term depth, and similarity score.</li>
+    <li><strong>Search</strong> - Search for GO terms by name or GO ID (e.g. <code>GO:0006915</code>). Searches both Biological Process and Molecular Function; each result is labelled with its namespace.</li>
 </ul>
+
+<div class="info-box">
+    <strong>Why the umbrella term sometimes ranks first.</strong> The suggestion list is
+    filtered so that an ancestor GO term is dropped when a more specific descendant is also
+    suggested &mdash; unless the ancestor is the term the Key Event actually names. For a
+    generic KE such as "Cell death", <em>cell death</em> is the intended annotation and will
+    not be evicted by <em>programmed cell death</em> scoring fractionally higher. Ranking
+    itself is pure semantic similarity: there is no boost that favours deeper, more specific
+    terms. Direction ("increased", "decreased") belongs in the Key Event's own annotation
+    rather than the GO term, so directionally-signed labels such as <em>positive regulation
+    of&hellip;</em> are excluded from the suggestion corpus.
+</div>
 
 <h4>Step 2 (alternative): Select Reactome Pathway — KE-Reactome Mapping</h4>
 <p>To map a KE to a Reactome pathway, use the <strong>KE-Reactome Mapping</strong> tab. Suggestions follow the same BioBERT pure-semantic ranker (v1.5) used for WP and GO; cards show the Reactome pathway name, the gene-overlap chip (informational), and a similarity score.</p>
@@ -92,14 +104,42 @@
     <li>"Propose Change" on any row opens a proposal modal for admin review</li>
 </ul>
 
+<h3>Exploring AOPs on the graph</h3>
+<p>The <a href="/aop-explorer">AOP Explorer</a> shows a whole Adverse Outcome Pathway as an
+interactive graph, so you can see where a Key Event sits between its Molecular Initiating
+Event and the Adverse Outcome before deciding what to curate.</p>
+<ul>
+    <li><strong>Per-resource coverage dots</strong> &mdash; each KE node carries three dots,
+        always in the order WikiPathways, GO, Reactome. A filled dot means the KE has at
+        least one approved mapping in that resource; a hollow dashed dot means it has none.
+        The node's border tells you at a glance whether it is mapped in <em>any</em>
+        resource.</li>
+    <li><strong>Gap filters</strong> &mdash; narrow the graph to unmapped KEs, or to gaps in
+        one specific resource, to find where curation effort is still needed.</li>
+    <li><strong>OECD development status</strong> &mdash; filter AOPs by their status in the
+        OECD workplan, so you can prioritise AOPs that are endorsed or under review.</li>
+    <li><strong>Gene-count badges</strong> &mdash; the number beside a node is how many genes
+        that KE has via its existing mappings.</li>
+    <li>Clicking a node opens a side panel with the KE's details and a link straight into the
+        mapping workflow.</li>
+</ul>
+
 <h3>Proposing Changes</h3>
-<p>If you notice an issue with an existing mapping:</p>
+<p>If you notice an issue with an existing mapping, you can correct it through the review
+workflow rather than needing database access. This works on all three resources.</p>
 <ol>
     <li>Sign in with GitHub (or use a workshop guest access code)</li>
     <li>Click <strong>Propose Change</strong> on the mapping row</li>
-    <li>Describe the change (delete, change confidence, change connection type)</li>
-    <li>Submit for admin review</li>
+    <li>Describe the change and submit it for admin review</li>
 </ol>
+<p>What you can propose depends on the resource:</p>
+<ul>
+    <li><strong>KE-WP and KE-GO</strong> &mdash; propose a deletion, a different confidence
+        level, or a different connection type</li>
+    <li><strong>KE-Reactome</strong> &mdash; deletion only. Reactome confidence is fixed when
+        the mapping is created and Reactome mappings carry no connection type, so there is
+        nothing to revise.</li>
+</ul>
 
 <h3>Downloads &amp; exports</h3>
 <p>The <a href="/downloads">/downloads</a> page provides ready-to-consume exports of all approved mappings:</p>
@@ -109,3 +149,21 @@
     <li><strong>CSV / JSON</strong> — flat tables for spreadsheets and notebooks</li>
 </ul>
 <p>For programmatic access, prefer the <a href="/api/docs">public REST API</a> — it supports pagination, filtering, and JSON / CSV output without needing to download a snapshot file.</p>
+
+<div class="info-box">
+    <strong>Citing the data.</strong> The download endpoints always serve the current state
+    of the database, which is what you want for analysis but not for a methods section. For a
+    frozen, citable snapshot use the Zenodo deposit: concept DOI
+    <a href="https://doi.org/10.5281/zenodo.20184643" target="_blank" rel="noopener">10.5281/zenodo.20184643</a>
+    always resolves to the latest version, and each version bundles GMT files split by
+    confidence tier plus Turtle with full curation provenance. Released under CC0 &mdash; no
+    permission needed to reuse, though a citation is appreciated.
+</div>
+
+<h3>Provenance &amp; privacy</h3>
+<p>The footer of every page records which upstream releases the current data came from
+(AOP-Wiki, WikiPathways, GO, Reactome), so a result can be traced back to the source versions
+that produced it.</p>
+<p>Every approved mapping also records who proposed it and who approved it. What that means
+for your personal data, and how long it is kept, is set out in the
+<a href="/privacy">privacy notice</a>.</p>
