@@ -496,13 +496,21 @@ def get_data_versions():
             """
             
             aop_endpoint = "https://aopwiki.rdf.bigcat-bioinformatics.org/sparql"
+            # Accept must be application/sparql-results+json. Both SPARQL
+            # endpoints answer application/json with HTTP 406, which the
+            # status check below then dropped silently (see #204).
             aop_response = requests.post(
                 aop_endpoint,
-                data={"query": aop_query, "format": "json"},
-                headers={"Accept": "application/json"},
+                data={"query": aop_query},
+                headers={"Accept": "application/sparql-results+json"},
                 timeout=10
             )
-            
+
+            if aop_response.status_code != 200:
+                raise RuntimeError(
+                    f"SPARQL endpoint returned HTTP {aop_response.status_code}"
+                )
+
             if aop_response.status_code == 200:
                 aop_data = aop_response.json()
                 if aop_data.get("results", {}).get("bindings"):
@@ -550,13 +558,19 @@ def get_data_versions():
             """
             
             wp_endpoint = "https://sparql.wikipathways.org/sparql"
+            # See the AOP-Wiki call above — application/json yields HTTP 406.
             wp_response = requests.post(
                 wp_endpoint,
-                data={"query": wp_query, "format": "json"},
-                headers={"Accept": "application/json"},
+                data={"query": wp_query},
+                headers={"Accept": "application/sparql-results+json"},
                 timeout=10
             )
-            
+
+            if wp_response.status_code != 200:
+                raise RuntimeError(
+                    f"SPARQL endpoint returned HTTP {wp_response.status_code}"
+                )
+
             if wp_response.status_code == 200:
                 wp_data = wp_response.json()
                 if wp_data.get("results", {}).get("bindings"):

@@ -232,3 +232,63 @@ def test_main_strict_returns_2_on_unknown(monkeypatch, tmp_path: Path, tmp_obo: 
 
     exit_code = cap.main(["--output", str(out), "--obo-path", str(tmp_obo), "--strict"])
     assert exit_code == 2
+
+
+# ---------------------------------------------------------------------------
+# WikiPathways moved its dataset IRIs from http:// to https:// (#204)
+# ---------------------------------------------------------------------------
+
+def test_capture_wikipathways_accepts_https_dataset_iri(monkeypatch) -> None:
+    """The live endpoint now serves https:// IRIs.
+
+    The original SPARQL filter pinned the scheme with
+    STRSTARTS(STR(?dataset), "http://data.wikipathways.org/"), so when upstream
+    switched to https the query returned HTTP 200 with zero bindings. Nothing
+    errored — the version badge simply read "unknown" indefinitely.
+    """
+    payload = {"results": {"bindings": [
+        {"dataset": {"value": "https://data.wikipathways.org/20260710/rdf/"}}
+    ]}}
+    monkeypatch.setattr(cap.requests, "post", lambda *a, **kw: _FakeResponse(payload))
+
+    rec = cap.capture_wikipathways()
+
+    assert rec["status"] == "ok"
+    assert rec["release_date"] == "2026-07-10"
+
+
+def test_capture_wikipathways_query_does_not_pin_the_scheme() -> None:
+    """Guard the query text itself, since a scheme-pinned filter fails silently.
+
+    A regression here produces zero bindings rather than an exception, so no
+    behavioural test on a mocked 200 response would catch it — only inspecting
+    the query does.
+    """
+    import inspect
+
+    source = inspect.getsource(cap.capture_wikipathways)
+    filter_lines = [ln for ln in source.splitlines() if "FILTER" in ln]
+    assert filter_lines, "capture_wikipathways no longer filters dataset IRIs"
+    filter_line = filter_lines[0]
+
+    assert "https?" in filter_line, (
+        "the dataset-IRI filter must match either scheme; pinning http:// or "
+        "https:// breaks silently when upstream switches"
+    )
+
+
+def test_capture_wikipathways_handles_non_rdf_suffix_iris(monkeypatch) -> None:
+    """The endpoint exposes /rdf/, /smiles and /citedin for the same release.
+
+    DESC ordering can return any of them; the release date is what matters and
+    is identical across all three, so extraction must not assume the /rdf/ path.
+    """
+    payload = {"results": {"bindings": [
+        {"dataset": {"value": "https://data.wikipathways.org/20260710/smiles"}}
+    ]}}
+    monkeypatch.setattr(cap.requests, "post", lambda *a, **kw: _FakeResponse(payload))
+
+    rec = cap.capture_wikipathways()
+
+    assert rec["status"] == "ok"
+    assert rec["release_date"] == "2026-07-10"

@@ -180,16 +180,23 @@ def capture_wikipathways(endpoint: str = WIKIPATHWAYS_SPARQL) -> dict:
     Resolve the WikiPathways release from the void:Dataset IRI.
 
     WP serves one release at a time and encodes the release date in the
-    dataset IRI itself, e.g. <http://data.wikipathways.org/20260510/rdf/>.
+    dataset IRI itself, e.g. <https://data.wikipathways.org/20260710/rdf/>.
     We query for the most recent matching dataset and extract the YYYYMMDD
     component, which is the canonical release date.
+
+    The scheme must not be pinned. WikiPathways moved these dataset IRIs from
+    ``http://`` to ``https://``, and the original ``STRSTARTS(..., "http://...")``
+    filter then matched nothing — the query kept returning HTTP 200 with zero
+    bindings, so the failure surfaced only as a permanently "unknown" version
+    badge rather than an error. Matching either scheme keeps this working
+    whichever way upstream serves them.
     """
     captured_at = _utcnow_iso()
     query = """
 PREFIX void: <http://rdfs.org/ns/void#>
 SELECT ?dataset WHERE {
   ?dataset a void:Dataset .
-  FILTER(STRSTARTS(STR(?dataset), "http://data.wikipathways.org/"))
+  FILTER(REGEX(STR(?dataset), "^https?://data\\\\.wikipathways\\\\.org/"))
 } ORDER BY DESC(?dataset) LIMIT 1
 """
     try:
