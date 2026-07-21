@@ -44,7 +44,10 @@ wheels/
 MANIFEST
 
 # Docker
-.dockerignore
+# NOTE: .dockerignore is deliberately NOT ignored. It is build configuration and
+# must be committed — when it is absent from a checkout, `COPY . .` silently
+# copies .git/ and tests/ into the runtime image. That only shows up in CI-built
+# images, because a local working copy has the file and so builds correctly.
 docker-compose.override.yml
 
 # IDE and editor files
