@@ -111,16 +111,59 @@ These are tracked under GitHub [issue #158](https://github.com/marvinm2/KE-WP-ma
 
 ## Token management
 
-- **Production token**: stored on the swarm service as `ZENODO_API_TOKEN`. Set with
-  `docker service update --env-add ZENODO_API_TOKEN=<token> molaop-builder`. The
-  scopes needed are `deposit:write` and `deposit:actions`.
-- **Rotate after**: a major release campaign, a suspected leak, or whenever the
-  responsible admin changes. Mint a new token on zenodo.org → Account → Applications
-  → Personal access tokens; rotate the env var; revoke the old one. Existing
-  published deposits are unaffected.
+The token is resolved by `resolve_zenodo_token` in
+`src/exporters/zenodo_uploader.py`, which checks three sources — first hit wins:
+
+1. `ZENODO_API_TOKEN_FILE` — path to a file containing the token.
+2. `/run/secrets/zenodo_api_token` — where Swarm mounts a secret of that name.
+   Nothing to configure; this is the intended production path.
+3. `ZENODO_API_TOKEN` — the plain environment variable. Still supported so an
+   existing deployment keeps working, but **not** how a new one should be set up.
+
+**Prefer the Docker secret.** An environment variable is readable by anyone who
+can run `docker service inspect molaop-builder` on the cluster, which is a wider
+audience than the people who should hold a publishing credential (#191).
+
+### Installing or rotating the production token
+
+Mint the token first: zenodo.org → Account → Applications → Personal access
+tokens → new token with scopes **`deposit:write`** and **`deposit:actions`**.
+
+```bash
+# 1. Create the secret (reads from stdin, so the token never lands in shell history).
+#    Use a versioned name — Swarm secrets are immutable and cannot be updated in place.
+ssh tgx1 'printf %s "<TOKEN>" | docker secret create zenodo_api_token_v2 -'
+
+# 2. Attach it to the service under the name the code looks for, and drop the
+#    old env var in the same update so there is no window where both exist.
+ssh tgx1 'docker service update \
+    --secret-add source=zenodo_api_token_v2,target=zenodo_api_token \
+    --env-rm ZENODO_API_TOKEN \
+    molaop-builder'
+
+# 3. Verify — the admin Exports page should show the token as configured, and a
+#    dry run exercises the resolution path without touching Zenodo.
+ssh tgx1 'docker exec $(docker ps -qf name=molaop-builder) \
+    python /app/scripts/publish_zenodo.py --dry-run'
+
+# 4. Confirm the token is no longer exposed in the service definition.
+ssh tgx1 'docker service inspect molaop-builder --format "{{json .Spec.TaskTemplate.ContainerSpec.Env}}"'
+
+# 5. Revoke the superseded token on zenodo.org, then remove the old secret:
+ssh tgx1 'docker secret rm zenodo_api_token_v1'   # only after the new one is verified
+```
+
+To rotate later, repeat with `_v3`, `--secret-rm zenodo_api_token_v2` alongside
+the `--secret-add`. Existing published deposits are unaffected by rotation.
+
+- **Rotate after**: a major release campaign, a suspected leak, an upstream
+  incident that invalidates tokens (as in Zenodo's 2026-05-21 session incident,
+  which revoked the original production token — #191), or whenever the
+  responsible admin changes.
 - **Sandbox token**: optional, only needed for `--sandbox` rehearsals. Get from
-  https://sandbox.zenodo.org/account/settings/applications/tokens/new/ and set as
-  `ZENODO_SANDBOX_API_TOKEN`.
+  https://sandbox.zenodo.org/account/settings/applications/tokens/new/ and supply
+  it the same three ways, as `ZENODO_SANDBOX_API_TOKEN` /
+  `/run/secrets/zenodo_sandbox_api_token`.
 
 ## Version timeline
 

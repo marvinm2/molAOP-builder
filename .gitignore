@@ -94,3 +94,7 @@ static/exports/*.ttl
 
 # Local SQLite copies / backups
 data/ke_mappings.db
+# Browser-automation and audit artifacts
+.playwright-mcp/
+audit-*.png
+p36-*.png

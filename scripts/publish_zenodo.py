@@ -186,16 +186,22 @@ def main() -> int:
 
     try:
         # Token + base URL
+        from src.exporters.zenodo_uploader import resolve_zenodo_token
+
         if args.sandbox:
             base = SANDBOX_BASE
-            token = os.environ.get("ZENODO_SANDBOX_API_TOKEN")
             tok_var = "ZENODO_SANDBOX_API_TOKEN"
         else:
             base = PROD_BASE
-            token = os.environ.get("ZENODO_API_TOKEN")
             tok_var = "ZENODO_API_TOKEN"
+        # Docker secret first, env var as fallback — see resolve_zenodo_token (#191).
+        token = resolve_zenodo_token(tok_var)
         if not args.dry_run and not token:
-            log.error("%s is not set — cannot publish", tok_var)
+            log.error(
+                "No Zenodo token for %s — set the env var, mount a Docker secret at "
+                "/run/secrets/%s, or point %s_FILE at a token file",
+                tok_var, tok_var.lower(), tok_var,
+            )
             return 1
         h_auth = {"Authorization": f"Bearer {token}"} if token else {}
         h_json = {**h_auth, "Content-Type": "application/json"} if token else {}

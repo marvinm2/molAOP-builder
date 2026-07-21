@@ -212,11 +212,22 @@ class GoSuggestionService:
         """Apply information content boost to favour more specific GO terms.
 
         Formula: hybrid_score *= (1 + ic_weight * ic_score)
+
+        **The boost is disabled by default (ic_weight = 0.0), which makes the
+        multiplier identically 1.0.** This is deliberate, not an oversight: the
+        v1.5 pure-semantic move (CHANGELOG 2.7.0) made BioBERT similarity the
+        sole ranking signal, and re-ranking by ontology depth on top of it
+        pulled overly specific terms above the term a curator actually meant.
+        The IC pipeline (`scripts/precompute_go_hierarchy.py`) is still run and
+        shipped because this method also attaches the `depth` field that the UI
+        displays, and because re-enabling the boost is a one-value config
+        change. See #192 and `docs/SCORING_CONFIG.md`.
+
         Also attaches depth field to each suggestion for UI display.
         """
         go_cfg = ns_data.config
         hierarchy_cfg = getattr(go_cfg, 'hierarchy', {}) if go_cfg else {}
-        ic_weight = hierarchy_cfg.get('ic_weight', 0.15) if isinstance(hierarchy_cfg, dict) else 0.15
+        ic_weight = hierarchy_cfg.get('ic_weight', 0.0) if isinstance(hierarchy_cfg, dict) else 0.0
 
         for s in suggestions:
             go_id = s.get('go_id', '')
@@ -242,7 +253,12 @@ class GoSuggestionService:
         """Remove ancestor GO terms when a more specific descendant is present.
 
         An ancestor is removed unless its hybrid_score exceeds the child's score
-        by more than redundancy_threshold (default 20%).
+        by more than redundancy_threshold (default 10%). The 10% figure is the
+        deployed value in `scoring_config.yaml`; it prunes more aggressively
+        than the 20% this defaulted to before #192, which is intended — under
+        pure-semantic ranking an ancestor rarely outscores its descendant by a
+        wide margin, so the looser threshold left near-duplicate umbrella terms
+        in the list.
 
         Exception: an ancestor whose label exactly matches the (direction-stripped)
         KE title is never pruned. For a generic KE ("Cell death"), the umbrella term
@@ -251,7 +267,7 @@ class GoSuggestionService:
         """
         go_cfg = ns_data.config
         hierarchy_cfg = getattr(go_cfg, 'hierarchy', {}) if go_cfg else {}
-        threshold = hierarchy_cfg.get('redundancy_threshold', 0.20) if isinstance(hierarchy_cfg, dict) else 0.20
+        threshold = hierarchy_cfg.get('redundancy_threshold', 0.10) if isinstance(hierarchy_cfg, dict) else 0.10
 
         # Build lookup of suggestion go_ids to their scores + names
         suggestion_ids = {s['go_id'] for s in suggestions}

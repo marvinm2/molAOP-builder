@@ -834,6 +834,17 @@ class PathwaySuggestionService:
         """
         Search pathways using SequenceMatcher fuzzy matching
 
+        A query that is a WikiPathways identifier (``WP554``, tolerating case
+        and ``:``/``-``/``_`` separators) resolves directly to that pathway
+        instead of being fuzzy-matched against titles, which never hits (#156).
+        Mirrors the ID branches in ``GoSuggestionService.search_go_terms`` and
+        ``ReactomeSuggestionService.search_reactome_terms``.
+
+        A bare-numeric query (``554``) is also tried as an ID, but falls
+        through to fuzzy matching when it does not resolve — unlike an
+        explicit ``WP``-prefixed query, digits alone are not unambiguously
+        an identifier.
+
         Args:
             query: Search query string
             threshold: Minimum similarity threshold (0.0-1.0)
@@ -844,6 +855,27 @@ class PathwaySuggestionService:
         """
         try:
             pathways = self._get_all_pathways_for_search()
+
+            # Direct ID lookup branch.
+            id_match = re.match(r"^(WP)?[:\-_]?(\d+)$", query.strip(), re.IGNORECASE)
+            if id_match:
+                normalized = f"WP{id_match.group(2)}"
+                for pathway in pathways:
+                    if pathway.get("pathwayID", "").upper() == normalized:
+                        return [
+                            {
+                                **pathway,
+                                "title_similarity": 1.0,
+                                "description_similarity": 1.0,
+                                "relevance_score": 1.0,
+                                "pathwaySvgUrl": f"https://www.wikipathways.org/wikipathways-assets/pathways/{pathway['pathwayID']}/{pathway['pathwayID']}.svg",
+                            }
+                        ]
+                # An explicit WP-prefixed query that misses is a miss, not a
+                # cue to fuzzy-match; bare digits fall through.
+                if id_match.group(1):
+                    return []
+
             # Remove directionality terms from query for better matching
             query_no_direction = remove_directionality_terms(query)
             query_clean = self._clean_text(query_no_direction)

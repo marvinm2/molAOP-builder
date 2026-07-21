@@ -321,24 +321,123 @@ var AOPGraphCore = (function () {
      * @param {Object} geneCountMap  {ke_id: count} — only KEs with genes
      */
     function applyGeneBadges(cy, geneCountMap) {
-        if (!cy || !geneCountMap) return;
+        applyNodeOverlays(cy, { geneCountMap: geneCountMap });
+    }
+
+    /**
+     * Build the coverage-dot markup for one KE (#190).
+     *
+     * Three dots, one per resource, in a fixed left-to-right order so position
+     * alone identifies the resource. A covered resource gets a filled dot, an
+     * uncovered one a hollow dashed dot — coverage is encoded by fill AND by
+     * the letter inside, never by colour alone, so the indicator survives any
+     * form of colour blindness and greyscale printing.
+     *
+     * @param {string} keId
+     * @param {Object|Function} coverage  { wp: Set, go: Set, reactome: Set }, or a
+     *        function returning that object. The caller's Sets are REASSIGNED when
+     *        the /api/mapped-ke-ids fetches land, so a captured reference goes
+     *        stale; pass a function to have them resolved at render time instead.
+     * @returns {string} HTML, or '' when no coverage data has loaded yet
+     */
+    function coverageDotsHtml(keId, coverage) {
+        var RESOURCES = [
+            { key: 'wp',       letter: 'W', name: 'WikiPathways' },
+            { key: 'go',       letter: 'G', name: 'GO' },
+            { key: 'reactome', letter: 'R', name: 'Reactome' }
+        ];
+
+        coverage = (typeof coverage === 'function') ? coverage() : coverage;
+        if (!coverage) return '';
+
+        // Nothing to say until at least one resource set has arrived.
+        var haveData = RESOURCES.some(function (r) {
+            return coverage[r.key] && typeof coverage[r.key].has === 'function';
+        });
+        if (!haveData) return '';
+
+        var summary = [];
+        var dots = RESOURCES.map(function (r) {
+            var set = coverage[r.key];
+            var known = set && typeof set.has === 'function';
+            var covered = known && set.has(keId);
+            var cls = 'ke-coverage-dot ke-coverage-dot--' + r.key +
+                      (covered ? ' is-covered' : ' is-uncovered');
+            var title = r.name + ': ' + (covered ? 'mapped' : 'not mapped');
+            summary.push(title);
+            // The letter is not announced separately — it is a visual shorthand
+            // for the resource, and the group's aria-label already spells it out.
+            return '<span class="' + cls + '" title="' + escapeHtml(title) + '"' +
+                   ' aria-hidden="true">' + escapeHtml(r.letter) + '</span>';
+        }).join('');
+
+        // Labelled as a single image rather than hidden: the dots are the only
+        // place per-resource coverage is stated on the graph, so hiding them
+        // would drop that information for screen-reader users entirely.
+        return '<div class="ke-coverage-dots" role="img" aria-label="' +
+               escapeHtml('Mapping coverage — ' + summary.join('; ')) + '">' +
+               dots + '</div>';
+    }
+
+    /**
+     * Apply the node HTML overlays: the gene-count badge and the per-resource
+     * coverage dots (#190).
+     *
+     * Both overlays go through a single nodeHtmlLabel() call. The plugin
+     * replaces its label set on each invocation, so registering them
+     * separately would silently drop whichever was registered first.
+     *
+     * @param {Object} cy
+     * @param {Object} [options]
+     * @param {Object} [options.geneCountMap]  { keId: count }
+     * @param {Object|Function} [options.coverage]  { wp: Set, go: Set, reactome: Set },
+     *        or a function returning it (preferred — see coverageDotsHtml).
+     */
+    function applyNodeOverlays(cy, options) {
+        options = options || {};
+        var geneCountMap = options.geneCountMap;
+        var coverage = options.coverage;
+
+        if (!cy) return;
+        if (!geneCountMap && !coverage) return;
         if (typeof cy.nodeHtmlLabel !== 'function') {
             console.warn('[AOPGraphCore] nodeHtmlLabel not available — badge plugin not loaded');
             return;
         }
-        cy.nodeHtmlLabel([{
-            query: 'node',
-            halign: 'right',
-            valign: 'top',
-            halignBox: 'left',
-            valignBox: 'bottom',
-            cssClass: 'gene-badge-container',
-            tpl: function(data) {
-                var count = geneCountMap[data.id];
-                if (!count || count === 0) return '';
-                return '<div class="gene-badge">' + escapeHtml(String(count)) + '</div>';
-            }
-        }]);
+
+        var labels = [];
+
+        if (geneCountMap) {
+            labels.push({
+                query: 'node',
+                halign: 'right',
+                valign: 'top',
+                halignBox: 'left',
+                valignBox: 'bottom',
+                cssClass: 'gene-badge-container',
+                tpl: function (data) {
+                    var count = geneCountMap[data.id];
+                    if (!count || count === 0) return '';
+                    return '<div class="gene-badge">' + escapeHtml(String(count)) + '</div>';
+                }
+            });
+        }
+
+        if (coverage) {
+            labels.push({
+                query: 'node',
+                halign: 'center',
+                valign: 'bottom',
+                halignBox: 'center',
+                valignBox: 'bottom',
+                cssClass: 'ke-coverage-container',
+                tpl: function (data) {
+                    return coverageDotsHtml(data.id, coverage);
+                }
+            });
+        }
+
+        cy.nodeHtmlLabel(labels);
     }
 
     // ---------------------------------------------------------------------------
@@ -351,6 +450,8 @@ var AOPGraphCore = (function () {
         buildElements: buildElements,
         findAOPsForKE: findAOPsForKE,
         escapeHtml: escapeHtml,
-        applyGeneBadges: applyGeneBadges
+        applyGeneBadges: applyGeneBadges,
+        applyNodeOverlays: applyNodeOverlays,
+        coverageDotsHtml: coverageDotsHtml
     };
 })();
