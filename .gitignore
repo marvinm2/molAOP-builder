@@ -83,6 +83,13 @@ data/*.json
 !data/zenodo_meta.json
 # Keep upstream source-versions manifest (small, ships with the snapshot)
 !data/source_versions.json
+# Keep the KE->AOP membership snapshot. It backs ke_aop_context on every mapping
+# record and the whole of /api/v1/aops, so an untracked copy meant the API's AOP
+# knowledge lived only on whichever machine last ran the precompute script - and
+# it went 4 months without a refresh because nothing surfaced its age.
+# NOTE: production reads this from the /app/data bind mount, which shadows the
+# image, so committing a refresh here does NOT deploy it. Copy it to the mount.
+!data/ke_aop_membership.json
 
 # GO source data (large, re-downloadable)
 data/go.obo

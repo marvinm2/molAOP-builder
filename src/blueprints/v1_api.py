@@ -674,3 +674,145 @@ def get_reactome_mapping(uuid):
         return jsonify({"error": f"Reactome mapping not found: {uuid}"}), 404
 
     return jsonify({"data": _serialize_reactome_mapping(row)})
+
+
+# ---------------------------------------------------------------------------
+# Routes: AOPs
+# ---------------------------------------------------------------------------
+
+_AOP_CSV_FIELDS = [
+    "aop_id", "aop_title", "ke_count", "mapped_ke_count",
+    "wikipathways_ke_count", "go_ke_count", "reactome_ke_count",
+]
+
+
+def _build_aop_index():
+    """Aggregate the KE->AOP membership snapshot into an AOP-keyed index.
+
+    Inverts ``ke_aop_membership`` (KE label -> [{aop_id, aop_title}]) and
+    cross-references the mapped KE IDs of each resource, so every AOP carries
+    both its total KE count and how many of those KEs the curators have mapped.
+
+    Returns:
+        List of AOP dicts sorted by mapped_ke_count descending, then numeric
+        AOP ID ascending.  Empty list if the membership snapshot is missing.
+    """
+    if not ke_aop_membership:
+        logger.warning("ke_aop_membership is unavailable; /api/v1/aops will be empty")
+        return []
+
+    def _mapped_ids(model, label):
+        # get_mapped_ke_ids() does not filter on approval, matching the
+        # collection endpoints above: the mapping tables only ever receive
+        # approved rows (pending work lives in the *_proposals tables). If that
+        # ever changes, this and /mappings both start counting pending rows.
+        if model is None:
+            return set()
+        try:
+            return set(model.get_mapped_ke_ids())
+        except Exception as exc:
+            logger.warning("Could not read mapped KE IDs for %s: %s", label, exc)
+            return set()
+
+    wp_ids = _mapped_ids(mapping_model, "wikipathways")
+    go_ids = _mapped_ids(go_mapping_model, "go")
+    rx_ids = _mapped_ids(reactome_mapping_model, "reactome")
+    any_ids = wp_ids | go_ids | rx_ids
+
+    # aop_id -> {title, kes, wp, go, rx}
+    index = {}
+    for ke_id, entries in ke_aop_membership.items():
+        for entry in entries or []:
+            aop_id = entry.get("aop_id")
+            if not aop_id:
+                continue
+            agg = index.setdefault(aop_id, {
+                "aop_id": aop_id,
+                "aop_title": entry.get("aop_title") or aop_id,
+                "kes": set(), "wp": set(), "go": set(), "rx": set(),
+            })
+            agg["kes"].add(ke_id)
+            if ke_id in wp_ids:
+                agg["wp"].add(ke_id)
+            if ke_id in go_ids:
+                agg["go"].add(ke_id)
+            if ke_id in rx_ids:
+                agg["rx"].add(ke_id)
+
+    aops = [
+        {
+            "aop_id": agg["aop_id"],
+            "aop_title": agg["aop_title"],
+            "ke_count": len(agg["kes"]),
+            "mapped_ke_count": len(agg["kes"] & any_ids),
+            "wikipathways_ke_count": len(agg["wp"]),
+            "go_ke_count": len(agg["go"]),
+            "reactome_ke_count": len(agg["rx"]),
+        }
+        for agg in index.values()
+    ]
+
+    def _sort_key(aop):
+        try:
+            numeric = int(str(aop["aop_id"]).split()[-1].replace("AOP:", ""))
+        except (ValueError, IndexError):
+            numeric = 10 ** 9
+        return (-aop["mapped_ke_count"], numeric)
+
+    aops.sort(key=_sort_key)
+    return aops
+
+
+@v1_api_bp.route("/aops", methods=["GET"])
+def list_aops():
+    """
+    GET /api/v1/aops
+
+    Lists the Adverse Outcome Pathways this instance knows about, each with its
+    Key Event count and how many of those KEs carry approved mappings, broken
+    down per resource.  Sorted by mapped_ke_count descending.
+
+    Query params (all optional):
+      mapped_only — "true" to return only AOPs with at least one mapped KE
+      q           — case-insensitive substring filter over aop_id and aop_title
+      page        — page number (default 1)
+      per_page    — results per page (default 50, max 200)
+
+    Accept header / ?format=csv behaves as for /mappings.
+
+    AOP membership comes from the precomputed AOP-Wiki snapshot
+    (data/ke_aop_membership.json), the same source behind the ke_aop_context
+    field on mapping records — so it is as current as the last run of
+    scripts/precompute_ke_aop_membership.py, not live SPARQL.
+    """
+    page, per_page = _parse_pagination_params()
+    mapped_only = request.args.get("mapped_only", "").lower() in ("1", "true", "yes")
+    q = (request.args.get("q") or "").strip().lower()
+
+    try:
+        aops = _build_aop_index()
+    except Exception as exc:
+        logger.error("Error in list_aops: %s", exc)
+        return jsonify({"error": "Failed to retrieve AOPs"}), 500
+
+    if mapped_only:
+        aops = [a for a in aops if a["mapped_ke_count"] > 0]
+    if q:
+        aops = [
+            a for a in aops
+            if q in a["aop_id"].lower() or q in a["aop_title"].lower()
+        ]
+
+    total = len(aops)
+    start = (page - 1) * per_page
+    window = aops[start:start + per_page]
+
+    base_url = request.url_root.rstrip("/") + "/api/v1/aops"
+    extra_params = {}
+    if mapped_only:
+        extra_params["mapped_only"] = "true"
+    if q:
+        extra_params["q"] = request.args.get("q")
+    pagination = _make_pagination(page, per_page, total, base_url, extra_params)
+
+    return _respond_collection(window, pagination, _AOP_CSV_FIELDS)

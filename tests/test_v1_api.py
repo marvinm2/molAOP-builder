@@ -494,3 +494,132 @@ class TestAssessmentShape:
         flat = _flatten_for_csv(serialized)
         assert flat["proposed_relationship"] is None
         assert flat["assessment_version"] == "v1"
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/aops
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def aop_membership(request):
+    """Install a small KE->AOP membership snapshot for the duration of a test.
+
+    The real snapshot is a 1,500-KE precomputed file; these tests need a
+    handful of KEs with known AOP membership, so the module global is swapped
+    and restored rather than reading from disk.
+    """
+    original = v1_mod.ke_aop_membership
+    v1_mod.ke_aop_membership = {
+        # KE 1 sits in two AOPs; KE 2 only in AOP 10; KE 3 in neither mapped set
+        "KE 1": [
+            {"aop_id": "AOP 10", "aop_title": "Liver steatosis"},
+            {"aop_id": "AOP 20", "aop_title": "Kidney failure"},
+        ],
+        "KE 2": [{"aop_id": "AOP 10", "aop_title": "Liver steatosis"}],
+        "KE 3": [{"aop_id": "AOP 20", "aop_title": "Kidney failure"}],
+    }
+    yield v1_mod.ke_aop_membership
+    v1_mod.ke_aop_membership = original
+
+
+def test_aops_counts_kes_and_mappings_per_aop(v1_client, aop_membership):
+    """Each AOP reports its total KEs and how many carry a mapping."""
+    client, mm, gm = v1_client
+    _seed_mapping(mm, ke_id="KE 1", wp_id="WP1")
+    _seed_go_mapping(gm, ke_id="KE 2", go_id="GO:0000002")
+
+    resp = client.get("/api/v1/aops")
+    assert resp.status_code == 200
+    by_id = {a["aop_id"]: a for a in resp.get_json()["data"]}
+
+    # AOP 10 holds KE 1 (WP-mapped) and KE 2 (GO-mapped) — both mapped
+    assert by_id["AOP 10"]["ke_count"] == 2
+    assert by_id["AOP 10"]["mapped_ke_count"] == 2
+    assert by_id["AOP 10"]["wikipathways_ke_count"] == 1
+    assert by_id["AOP 10"]["go_ke_count"] == 1
+    assert by_id["AOP 10"]["reactome_ke_count"] == 0
+
+    # AOP 20 holds KE 1 (mapped) and KE 3 (unmapped)
+    assert by_id["AOP 20"]["ke_count"] == 2
+    assert by_id["AOP 20"]["mapped_ke_count"] == 1
+    assert by_id["AOP 20"]["aop_title"] == "Kidney failure"
+
+
+def test_aops_sorted_by_mapped_count_descending(v1_client, aop_membership):
+    """Best-covered AOPs come first, which is the order the picker shows."""
+    client, mm, gm = v1_client
+    _seed_mapping(mm, ke_id="KE 1", wp_id="WP1")
+    _seed_mapping(mm, ke_id="KE 2", wp_id="WP2")
+
+    data = client.get("/api/v1/aops").get_json()["data"]
+    assert [a["aop_id"] for a in data] == ["AOP 10", "AOP 20"]
+    assert data[0]["mapped_ke_count"] >= data[1]["mapped_ke_count"]
+
+
+def test_aops_mapped_only_filter(v1_client, aop_membership):
+    """mapped_only drops AOPs no curator has touched."""
+    client, mm, gm = v1_client
+    _seed_mapping(mm, ke_id="KE 2", wp_id="WP2")  # only KE 2 -> only AOP 10
+
+    all_ids = [a["aop_id"] for a in client.get("/api/v1/aops").get_json()["data"]]
+    mapped_ids = [
+        a["aop_id"]
+        for a in client.get("/api/v1/aops?mapped_only=true").get_json()["data"]
+    ]
+    assert "AOP 20" in all_ids
+    assert mapped_ids == ["AOP 10"]
+
+
+def test_aops_query_filter_matches_title_and_id(v1_client, aop_membership):
+    """q searches both the AOP ID and its title."""
+    client, mm, gm = v1_client
+
+    by_title = client.get("/api/v1/aops?q=kidney").get_json()["data"]
+    assert [a["aop_id"] for a in by_title] == ["AOP 20"]
+
+    by_id = client.get("/api/v1/aops?q=aop 10").get_json()["data"]
+    assert [a["aop_id"] for a in by_id] == ["AOP 10"]
+
+
+def test_aops_pagination_envelope(v1_client, aop_membership):
+    """Pagination matches the envelope the other v1 collections return."""
+    client, mm, gm = v1_client
+
+    payload = client.get("/api/v1/aops?per_page=1").get_json()
+    assert len(payload["data"]) == 1
+    assert payload["pagination"]["total"] == 2
+    assert payload["pagination"]["total_pages"] == 2
+    assert payload["pagination"]["next"] is not None
+    assert payload["pagination"]["prev"] is None
+
+
+def test_aops_csv_format(v1_client, aop_membership):
+    """?format=csv returns the flat per-resource columns."""
+    client, mm, gm = v1_client
+    _seed_mapping(mm, ke_id="KE 1", wp_id="WP1")
+
+    resp = client.get("/api/v1/aops?format=csv")
+    assert resp.status_code == 200
+    assert "text/csv" in resp.headers["Content-Type"]
+    body = resp.get_data(as_text=True)
+    assert body.splitlines()[0] == (
+        "aop_id,aop_title,ke_count,mapped_ke_count,"
+        "wikipathways_ke_count,go_ke_count,reactome_ke_count"
+    )
+
+
+def test_aops_empty_when_membership_snapshot_missing(v1_client):
+    """No snapshot means an empty list, not a 500.
+
+    The snapshot is a precomputed file mounted at runtime, so a deployment
+    without it must degrade to "no AOPs known" rather than breaking the API.
+    """
+    client, mm, gm = v1_client
+    original = v1_mod.ke_aop_membership
+    v1_mod.ke_aop_membership = None
+    try:
+        resp = client.get("/api/v1/aops")
+        assert resp.status_code == 200
+        assert resp.get_json()["data"] == []
+    finally:
+        v1_mod.ke_aop_membership = original
