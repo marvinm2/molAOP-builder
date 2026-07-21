@@ -1,102 +1,128 @@
 """
-`/get_data_versions` returned an empty object in production (#204).
+`/get_data_versions` — consolidated onto SourceVersionService (#204).
 
-Two defects compounded:
+History: the route issued its own SPARQL against AOP-Wiki and WikiPathways,
+duplicating what `src/services/source_versions.py` already did for the footer
+badges. That duplicate drifted and broke silently in two ways at once —
 
-1. The route sent ``Accept: application/json``. Both the AOP-Wiki and
-   WikiPathways SPARQL endpoints answer that with **HTTP 406 Not Acceptable** —
-   they serve ``application/sparql-results+json``. Verified against both live
-   endpoints.
-2. The response handling was ``if status_code == 200: <set key>`` with no
-   ``else``. A non-200 therefore set no key and raised nothing, so the route
-   returned ``{}`` with a 200 status and no log line. The frontend
-   (`static/js/main.js`) silently rendered nothing.
+1. It sent ``Accept: application/json``. Both SPARQL endpoints answer that with
+   **HTTP 406**; they serve ``application/sparql-results+json``.
+2. Its handler was ``if status_code == 200:`` with no ``else``, so a non-200 set
+   no key and raised nothing. The route returned ``{}`` with a 200 status and no
+   log line, making a total upstream failure look identical to "no data".
 
-The combination meant a total outage of this endpoint looked identical to
-"no data yet". These tests pin the header and the non-silence.
+The route now delegates to `source_versions.snapshot()`. These tests pin the
+properties that made the old version fail invisibly: every resource is always
+represented, failures are labelled rather than dropped, and no second copy of
+the upstream fetch logic creeps back in.
 """
 
 import pytest
 
+RESOURCES = ["wikipathways", "gene_ontology", "reactome", "aopwiki"]
 
-def _versions_source():
+
+@pytest.fixture
+def stub_snapshot(monkeypatch):
+    """Replace SourceVersionService.snapshot with a controllable stub."""
+
+    def _install(payload):
+        from src.blueprints import api
+
+        monkeypatch.setattr(api.source_versions, "snapshot", lambda: payload)
+
+    return _install
+
+
+def test_reports_all_four_resources(client, stub_snapshot):
+    """Coverage went from two resources to four; GO and Reactome were never here."""
+    stub_snapshot(
+        {
+            "wikipathways": {"version": "2026-07-10", "unavailable": False},
+            "gene_ontology": {"version": "2026-06-15", "unavailable": False},
+            "reactome": {"version": "v97", "unavailable": False},
+            "aopwiki": {"version": "2026-07-17", "unavailable": False},
+        }
+    )
+
+    body = client.get("/get_data_versions").get_json()
+
+    assert sorted(body) == sorted(RESOURCES)
+    assert body["wikipathways"]["version"] == "2026-07-10"
+    assert body["reactome"]["version"] == "v97"
+    assert body["wikipathways"]["unavailable"] is False
+    assert body["wikipathways"]["source"] == "WikiPathways"
+
+
+def test_failed_resource_is_labelled_not_dropped(client, stub_snapshot):
+    """The core regression: a failure must stay visible in the payload.
+
+    Previously an upstream failure removed the key entirely, so a caller could
+    not tell "fetch failed" from "resource not covered".
+    """
+    stub_snapshot(
+        {
+            "wikipathways": {"version": "unavailable", "unavailable": True},
+            "gene_ontology": {"version": "2026-06-15", "unavailable": False},
+            "reactome": {"version": "v97", "unavailable": False},
+            "aopwiki": {"version": "2026-07-17", "unavailable": False},
+        }
+    )
+
+    body = client.get("/get_data_versions").get_json()
+
+    assert "wikipathways" in body, "failed resource was dropped from the payload"
+    assert body["wikipathways"]["unavailable"] is True
+    assert body["gene_ontology"]["unavailable"] is False
+
+
+def test_empty_snapshot_still_lists_every_resource(client, stub_snapshot):
+    """Even a total service failure must not return `{}` with a 200."""
+    stub_snapshot({})
+
+    resp = client.get("/get_data_versions")
+    body = resp.get_json()
+
+    assert resp.status_code == 200
+    assert sorted(body) == sorted(RESOURCES)
+    assert all(body[r]["unavailable"] is True for r in RESOURCES)
+
+
+def test_snapshot_raising_returns_500_not_empty_body(client, monkeypatch):
+    """snapshot() is documented never to raise; a breach is a real error.
+
+    The old code's failure mode was a 200 with an empty body. If the service
+    contract is ever violated we want a 500, not silence.
+    """
+    from src.blueprints import api
+
+    def boom():
+        raise RuntimeError("contract violated")
+
+    monkeypatch.setattr(api.source_versions, "snapshot", boom)
+
+    resp = client.get("/get_data_versions")
+
+    assert resp.status_code == 500
+    assert "error" in resp.get_json()
+
+
+def test_route_does_not_reimplement_upstream_fetches():
+    """Guard against a second copy of the SPARQL logic returning.
+
+    The duplication is what allowed the two implementations to drift apart
+    until one of them was silently dead.
+    """
     import inspect
 
     from src.blueprints import api
 
-    return inspect.getsource(api.get_data_versions)
+    source = inspect.getsource(api.get_data_versions)
 
-
-def test_requests_sparql_results_json_not_plain_json():
-    """application/json gets a 406 from both endpoints."""
-    source = _versions_source()
-
-    assert "application/sparql-results+json" in source, (
-        "SPARQL endpoints require Accept: application/sparql-results+json"
+    assert "requests.post" not in source, (
+        "route must delegate to source_versions, not issue its own HTTP calls"
     )
-    assert '"Accept": "application/json"' not in source, (
-        "Accept: application/json returns HTTP 406 from both AOP-Wiki and "
-        "WikiPathways; it must not be reintroduced"
-    )
-
-
-def test_non_200_is_not_swallowed():
-    """A failed upstream call must not silently vanish from the response."""
-    source = _versions_source()
-
-    assert "status_code != 200" in source, (
-        "route must branch on non-200 explicitly; the original code only "
-        "handled == 200, so a 406 produced a key-less, log-less empty result"
-    )
-
-
-@pytest.mark.parametrize("resource", ["aop_wiki", "wikipathways"])
-def test_upstream_failure_still_reports_the_resource(monkeypatch, client, resource):
-    """Every resource appears in the payload even when its fetch fails.
-
-    The point of the fix is that a caller can distinguish "fetch failed" from
-    "resource not covered". Before, both looked like an absent key.
-    """
-    import requests as _requests
-
-    from src.blueprints import api
-
-    class _Resp:
-        status_code = 406
-        text = "Not Acceptable"
-
-        def json(self):  # pragma: no cover - should not be reached on 406
-            raise ValueError("no json on a 406")
-
-    monkeypatch.setattr(api.requests, "post", lambda *a, **kw: _Resp())
-
-    resp = client.get("/get_data_versions")
-
-    assert resp.status_code == 200
-    body = resp.get_json()
-    assert resource in body, (
-        f"{resource} missing entirely from the payload on upstream failure — "
-        "this is the silent-drop bug"
-    )
-    # And it must be marked as failed rather than looking like real data.
-    assert body[resource].get("version") in ("Unknown", "unavailable", None) or (
-        "Error" in str(body[resource].get("comment", ""))
-    )
-
-
-def test_all_resources_present_on_success(monkeypatch, client):
-    """A healthy fetch reports both resources."""
-    from src.blueprints import api
-
-    class _Resp:
-        status_code = 200
-
-        def json(self):
-            return {"results": {"bindings": [{}]}}
-
-    monkeypatch.setattr(api.requests, "post", lambda *a, **kw: _Resp())
-
-    body = client.get("/get_data_versions").get_json()
-
-    assert "aop_wiki" in body
-    assert "wikipathways" in body
+    assert "sparql" not in source.lower() or "SPARQL" in inspect.getdoc(
+        api.get_data_versions
+    ), "route should no longer build SPARQL queries itself"
+    assert "source_versions.snapshot" in source

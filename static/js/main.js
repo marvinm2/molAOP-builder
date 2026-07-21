@@ -507,7 +507,6 @@ class KEWPApp {
         }
 
         this.loadDropdownOptions();
-        this.loadDataVersions();
 
         // Initialize form validation
 
@@ -1874,51 +1873,6 @@ class KEWPApp {
 
     hidePathwayPreview() {
         $("#pathway-preview").remove();
-    }
-
-    loadDataVersions() {
-        // Only load version info if we're on a page that has the version info element
-        if ($("#version-info").length === 0) {
-            return;
-        }
-        
-        $.getJSON("/get_data_versions")
-            .done((data) => {
-                // Version data loaded successfully
-                this.displayVersionInfo(data);
-            })
-            .fail((xhr, status, error) => {
-                console.warn("Failed to load version information:", error);
-                $("#version-info").html('<span class="text-muted">Version information unavailable</span>');
-            });
-    }
-
-    displayVersionInfo(versions) {
-        let versionHtml = '';
-        
-        if (versions.aop_wiki) {
-            versionHtml += `
-                <div style="margin-bottom: 3px;">
-                    <strong>AOP-Wiki:</strong> ${versions.aop_wiki.version}
-                    ${versions.aop_wiki.date !== 'Unknown' ? ` (${versions.aop_wiki.date})` : ''}
-                </div>
-            `;
-        }
-        
-        if (versions.wikipathways) {
-            versionHtml += `
-                <div style="margin-bottom: 3px;">
-                    <strong>WikiPathways:</strong> ${versions.wikipathways.version}
-                    ${versions.wikipathways.date !== 'Unknown' ? ` (${versions.wikipathways.date})` : ''}
-                </div>
-            `;
-        }
-        
-        if (versionHtml) {
-            $("#version-info").html(versionHtml);
-        } else {
-            $("#version-info").html('<span class="text-muted">Version information not available</span>');
-        }
     }
 
     populatePathwayDropdowns() {

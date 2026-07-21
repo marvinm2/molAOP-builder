@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`/get_data_versions` consolidated onto `SourceVersionService`.** The route carried its own SPARQL against AOP-Wiki and WikiPathways, duplicating what `src/services/source_versions.py` already did for the footer badges. Having two implementations is what let one of them drift until it was silently dead (#204). The route now delegates: ~134 lines of hand-rolled query and error handling become ~48, coverage goes from two resources to **four** (GO and Reactome were never reported by this endpoint), it inherits the service's 24-hour cache instead of hitting upstream on every request, and every resource is always present in the response with an explicit `unavailable` flag rather than being dropped on failure. The URL and its public availability are unchanged. A guard test asserts the route never reintroduces its own `requests.post`.
+- **Removed dead version-rendering JavaScript.** `loadDataVersions` and `displayVersionInfo` in `static/js/main.js` (45 lines) rendered into a `#version-info` element that does not exist in any template, so the function returned early on every page load. Deleted along with its call site; the footer badges are rendered server-side from the same service.
+
 ### Fixed
 
 - **WikiPathways version showed as "unknown" on the live site.** WikiPathways moved its `void:Dataset` IRIs from `http://` to `https://`, and `capture_wikipathways` filtered with `STRSTARTS(STR(?dataset), "http://data.wikipathways.org/")`. The query kept returning HTTP 200 with **zero bindings**, so nothing errored and nothing logged — the failure surfaced only as a permanently "unknown" badge in the footer while Reactome and AOP-Wiki resolved normally. The filter now matches either scheme (`^https?://data\.wikipathways\.org/`) and the badge reads `2026-07-10`, the current release. A guard test asserts the query never pins a scheme again, because a scheme-pinned filter fails silently — no behavioural test against a mocked 200 response can catch it, only inspecting the query can. Two further tests cover an https IRI end-to-end and the `/smiles` and `/citedin` dataset suffixes that share each release alongside `/rdf/`.
