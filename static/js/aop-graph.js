@@ -49,10 +49,15 @@ var AOPGraph = (function () {
     var selectedKEId = null;
     var geneCountMap = {};
 
-    // Mapped KE ID sets (one per resource) — populated by loadMappedKeIds()
+    // Mapped KE ID sets (one per resource) — populated by loadMappedKeIds().
+    // They start empty so the gap filter can call .has() safely before the
+    // fetches land; mappedKeIdsLoaded distinguishes "not loaded yet" from
+    // "loaded and genuinely empty", which the coverage dots must not conflate —
+    // an empty Set would otherwise render every KE as uncovered (#190).
     var wpMappedKeIds = new Set();
     var goMappedKeIds = new Set();
     var reactomeMappedKeIds = new Set();
+    var mappedKeIdsLoaded = false;
 
     // Gap filter state — sticky across AOP switches
     var currentGapFilter = 'all';
@@ -84,11 +89,15 @@ var AOPGraph = (function () {
                 kerData = data;
                 populateSelect2(data);
                 populateCardGrid(data);
+                // Both loaders are applied on every subsequent graph render, but
+                // a graph may already be on screen when they land (the user can
+                // pick an AOP before the fetches finish), so refresh in place too.
                 loadGeneCountMap(function () {
-                    // gene count data ready — will be applied on each graph render
+                    refreshNodeOverlays();
                 });
                 loadMappedKeIds(function () {
-                    // mapped KE ID sets ready — will be applied on each graph render
+                    refreshNodeOverlays();
+                    applyGapFilter(currentGapFilter);
                 });
             })
             .catch(function (err) {
@@ -182,7 +191,10 @@ var AOPGraph = (function () {
 
         function done() {
             pending -= 1;
-            if (pending === 0 && callback) { callback(); }
+            if (pending === 0) {
+                mappedKeIdsLoaded = true;
+                if (callback) { callback(); }
+            }
         }
 
         resources.forEach(function (res) {
@@ -564,6 +576,63 @@ var AOPGraph = (function () {
     // ---------------------------------------------------------------------------
     // Graph rendering — delegates to AOPGraphCore
     // ---------------------------------------------------------------------------
+
+    /**
+     * (Re-)register the node HTML overlays on the current graph: the gene-count
+     * badge (AOPX-04) and the per-resource coverage dots (#190).
+     *
+     * Called both after a render and when either loader lands, since the user
+     * can select an AOP before the fetches complete. Both overlays go through
+     * one AOPGraphCore.applyNodeOverlays call because the nodeHtmlLabel plugin
+     * replaces its whole label set per invocation.
+     */
+    /**
+     * KEs mapped in at least one resource.
+     *
+     * The node border used to be driven by wpMappedKeIds alone, so a KE mapped
+     * only in GO or Reactome was drawn as unmapped (#190). Now that the dots
+     * state each resource individually, the border carries the "any coverage"
+     * summary and no longer contradicts them.
+     */
+    function anyMappedKeIds() {
+        var union = new Set();
+        [wpMappedKeIds, goMappedKeIds, reactomeMappedKeIds].forEach(function (set) {
+            if (set && typeof set.forEach === 'function') {
+                set.forEach(function (id) { union.add(id); });
+            }
+        });
+        return union;
+    }
+
+    function refreshNodeOverlays() {
+        if (!cy) return;
+
+        // Re-derive the border state too: the sets may have landed after this
+        // graph was rendered, and node data.mapped was fixed at build time.
+        if (mappedKeIdsLoaded) {
+            var mapped = anyMappedKeIds();
+            cy.nodes().forEach(function (node) {
+                node.data('mapped', mapped.has(node.id()));
+            });
+        }
+
+        AOPGraphCore.applyNodeOverlays(cy, {
+            geneCountMap: Object.keys(geneCountMap).length > 0 ? geneCountMap : null,
+            // Resolved lazily: the three Sets are reassigned when the
+            // /api/mapped-ke-ids fetches land, so a captured reference would
+            // pin stale coverage. Null until loaded, so a KE is never drawn as
+            // "not mapped" merely because the data has not arrived.
+            coverage: function () {
+                if (!mappedKeIdsLoaded) return null;
+                return {
+                    wp: wpMappedKeIds,
+                    go: goMappedKeIds,
+                    reactome: reactomeMappedKeIds
+                };
+            }
+        });
+    }
+
     function renderGraph(aopId) {
         var aopData = kerData[aopId];
         if (!aopData) return;
@@ -576,7 +645,10 @@ var AOPGraph = (function () {
 
         // Pass mappedKeIds so AOPGraphCore adds green-border styling on mapped KEs (AOPX-05)
         cy = AOPGraphCore.renderGraph('cy', aopData, {
-            mappedKeIds: wpMappedKeIds,
+            // Border = mapped in ANY resource; the per-resource detail is on
+            // the coverage dots (#190). Previously this was WP-only, which drew
+            // a GO-or-Reactome-only KE as if it had no mappings at all.
+            mappedKeIds: anyMappedKeIds(),
             onNodeTap: function (nodeData, cyInst) {
                 cyInst.elements().removeClass('active-node');
                 cyInst.$('#' + nodeData.id).addClass('active-node');
@@ -587,10 +659,7 @@ var AOPGraph = (function () {
             }
         });
 
-        // Apply gene-count badges (AOPX-04 — already functional)
-        if (cy && Object.keys(geneCountMap).length > 0) {
-            AOPGraphCore.applyGeneBadges(cy, geneCountMap);
-        }
+        refreshNodeOverlays();
 
         // Re-apply sticky gap filter and update counts
         applyGapFilter(currentGapFilter);

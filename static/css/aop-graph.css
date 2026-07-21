@@ -471,6 +471,56 @@
     pointer-events: none;
 }
 
+/* ---------------------------------------------------------------------------
+   Per-resource coverage dots on KE nodes (#190)
+
+   Three dots in a fixed order (WikiPathways, GO, Reactome) below each node.
+   Coverage is encoded three ways at once — fill, border style, and the letter
+   inside — so the indicator never depends on colour alone and stays readable
+   for colour-blind users and in greyscale.
+   --------------------------------------------------------------------------- */
+.ke-coverage-container {
+    /* Rendered as an absolute div by the plugin; no sizing needed here */
+}
+
+.ke-coverage-dots {
+    display: flex;
+    gap: 3px;
+    justify-content: center;
+    transform: translateY(4px);
+    pointer-events: none;
+}
+
+.ke-coverage-dot {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    font-size: 8px;
+    font-weight: 700;
+    line-height: 1;
+    box-sizing: border-box;
+    /* Keeps the letters legible over whatever the node/background is */
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.85);
+}
+
+.ke-coverage-dot.is-covered {
+    color: #fff;
+    border: 1px solid transparent;
+}
+
+.ke-coverage-dot.is-uncovered {
+    background: #fff;
+    color: #9aa0a6;
+    border: 1px dashed #9aa0a6;
+}
+
+.ke-coverage-dot--wp.is-covered       { background: var(--color-primary-blue, #307BBF); }
+.ke-coverage-dot--go.is-covered       { background: var(--color-primary-pink, #E6007E); }
+.ke-coverage-dot--reactome.is-covered { background: var(--color-secondary-teal, #005A6C); }
+
 /* Legend for gene badges */
 .aop-graph-legend {
     display: flex;
