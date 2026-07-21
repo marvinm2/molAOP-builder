@@ -90,17 +90,48 @@ flip it on:
 
 These are tracked under GitHub [issue #158](https://github.com/marvinm2/molAOP-builder/issues/158):
 
-- **`data/zenodo_meta.json` write may fall back to `/tmp/`** if the container uid
-  doesn't match the host owner of the gluster mount. The `Dockerfile` now accepts
-  `APP_UID` / `APP_GID` build args (default `1000`) so a rebuild aligned with the
-  host owner clears the original EACCES. Both the release script and the admin
-  `publish_zenodo` route share `persist_meta_with_fallback`: a successful Zenodo
-  deposit never appears to fail; on a write block the payload lands at
-  `/tmp/zenodo_meta_pending.json` (loud log, response includes `meta_path_fallback`).
-  Operator then `scp`s it back into git. Confirm the host owner with
-  `ssh tgx1 stat -c '%u %g' /mnt/gluster/docker/molaop-builder/data` and rebuild
-  with `docker build --build-arg APP_UID=<uid> --build-arg APP_GID=<gid> ...` if
-  it isn't 1000:1000.
+- **`data/zenodo_meta.json` write may fall back to `/tmp/`.** Both the release script
+  and the admin `publish_zenodo` route share `persist_meta_with_fallback`, so a
+  successful Zenodo deposit never appears to fail; on a write block the payload lands
+  at `/tmp/zenodo_meta_pending.json` (loud log, response includes
+  `meta_path_fallback`) and the operator restores it.
+
+  **Root cause is per-file group ownership, not the container uid.** Observed on the
+  2026-07-21 release:
+
+  ```
+  drwxrwsrwx  70055468 1000   data/                 <- world-writable, setgid, gid 1000
+  -rw-rw-r--  70055468 1003   data/zenodo_meta.json <- gid 1003
+  uid=1000(appuser) gid=1000(appuser)               <- container user
+  ```
+
+  The *directory* is fine — the container can create new files in it. The blocked
+  write is on the *existing file*, which carries group `1003` while the container is
+  gid `1000`, so permission resolution falls through to `other` = `r--`. Rebuilding
+  the image with different `APP_UID` / `APP_GID` build args does **not** help, because
+  the container uid is already 1000; the file simply belongs to a group it is not in.
+
+  Fix by deleting and recreating the file from inside the container, so it inherits
+  gid 1000 from the setgid directory and stays writable thereafter:
+
+  ```bash
+  ssh tgx1 'cp /mnt/gluster/docker/molaop-builder/data/zenodo_meta.json /tmp/zenodo_meta.stale.bak'
+  ssh tgx1 'C=$(docker ps -qf name=molaop-builder); docker exec $C sh -c \
+      "rm -f /app/data/zenodo_meta.json && cp /tmp/zenodo_meta_pending.json /app/data/zenodo_meta.json"'
+  ssh tgx1 'ls -ln /mnt/gluster/docker/molaop-builder/data/zenodo_meta.json'   # expect 1000 1000
+  ```
+
+  The app picks the new file up without a restart. Then `scp` it back into git as in
+  step 2 above.
+
+  **The same trap applies to nine other files on the mount** — `go.obo`,
+  `goa_human.gaf.gz`, `ke_embeddings.npz`, `ke_metadata.json`, `pathway_metadata.json`,
+  `pathway_embeddings.npz`, `pathway_title_embeddings.npz`, `go_bp_gene_annotations.json`,
+  `ke_aop_membership.json` — all group `1003`. They are readable, so nothing breaks in
+  normal operation, but any in-place rewrite hits the identical EACCES. This is why the
+  corpus-regeneration procedure says to `rm -f` the artifacts first and let the
+  container recreate them. Check with:
+  `ssh tgx1 "ls -ln /mnt/gluster/docker/molaop-builder/data | awk '\$4==1003'"`.
 - **`rdflib` ISO-8601 warnings** are resolved. The DB startup migration
   (`_migrate_iso8601_datetime_backfill`) normalises legacy `"YYYY-MM-DD HH:MM:SS"`
   rows to ISO-8601 across the three mapping tables, and the RDF exporter applies

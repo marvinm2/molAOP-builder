@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Zenodo release `2026-07-21`** — [10.5281/zenodo.21472670](https://doi.org/10.5281/zenodo.21472670), the second canonical version on the concept timeline. Counts: WikiPathways 125 (79 High / 44 Medium / 2 Low), GO 11 (4/7/0), Reactome 6 (2/4/0) — GO and Reactome roughly doubled since the 2026-05-14 deposit. CC0, same v3 structure (three per-resource ZIPs with GMT-by-confidence + Turtle, plus a top-level README). Published with the repo rename already in place, so the deposit description and bundled README carry the `molAOP-builder` URL.
+
+### Security
+
+- **Zenodo API token migrated from an environment variable to a Docker secret** on the production service. `zenodo_api_token_v2` is mounted at `/run/secrets/zenodo_api_token` and `ZENODO_API_TOKEN` was removed from the service spec in the same update, so the publishing credential is no longer readable via `docker service inspect`. Completes #191, whose original trigger was the token revoked by Zenodo's 2026-05-21 session incident.
+
+### Fixed
+
+- **Corrected the documented root cause of the `zenodo_meta.json` EACCES fallback** (#191). `CLAUDE.md` and `docs/RELEASES.md` attributed it to a container-uid/host-owner mismatch on the data directory and prescribed rebuilding the image with `APP_UID`/`APP_GID` build args. That diagnosis was wrong and the prescribed fix could not have worked: the container already runs as uid 1000, and the data directory is world-writable with setgid gid 1000, so creating new files there succeeds. The actual blocker is **per-file group ownership** — pre-existing files carry gid `1003` while the container is gid `1000`, so permission resolution falls through to `other` = `r--` and an in-place overwrite fails. The documented remedy is now to delete and recreate the file from inside the container, which makes it inherit gid 1000 from the setgid directory and stay writable. Nine corpus artifacts on the mount carry the same gid and will hit the identical failure on any in-place rewrite; both docs now say so, with a one-liner to list them.
+
 ### Changed
 
 - **Repository renamed `KE-WP-mapping` → `molAOP-builder`.** The old name dated from when the tool mapped Key Events to WikiPathways only; it now covers three target resources (WikiPathways, GO BP/MF, Reactome) plus curation review, a versioned public API, exports and DOI'd releases. The new name matches the deployed service, the container image (`ghcr.io/marvinm2/molaop-builder`), and the sister repository `molAOP-analyser`. GitHub permanently redirects the old web and clone URLs, and the workflow hardcodes `IMAGE_NAME: marvinm2/molaop-builder`, so the published image, the swarm deployment and the public API are all unaffected. The GitHub description (still the January 2025 placeholder), homepage URL and topics were set at the same time. All in-repo references updated — including the two in `src/exporters/zenodo_assembly.py` that are embedded into the Zenodo deposit README and description, and one in the GMT export header, which had to land before the next Zenodo release so the new DOI does not ship pointing at the old URL. `docs/archive/` is intentionally left as-is.
