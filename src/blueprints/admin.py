@@ -1516,6 +1516,7 @@ def admin_exports():
     from pathlib import Path
 
     from src.exporters.zenodo_assembly import counts as count_rows
+    from src.exporters.zenodo_uploader import resolve_zenodo_token
 
     meta_path = Path("data/zenodo_meta.json")
     zenodo_meta = {}
@@ -1538,7 +1539,7 @@ def admin_exports():
         "admin_exports.html",
         zenodo_meta=zenodo_meta,
         live_counts=live_counts,
-        zenodo_token_configured=bool(os.environ.get("ZENODO_API_TOKEN")),
+        zenodo_token_configured=bool(resolve_zenodo_token("ZENODO_API_TOKEN")),
     )
 
 

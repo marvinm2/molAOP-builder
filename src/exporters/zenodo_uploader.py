@@ -15,6 +15,49 @@ logger = logging.getLogger(__name__)
 
 ZENODO_BASE = "https://zenodo.org/api"
 
+# Default mount path Docker Swarm uses for a secret named `zenodo_api_token`
+# / `zenodo_sandbox_api_token`.
+_SECRET_PATHS = {
+    "ZENODO_API_TOKEN": "/run/secrets/zenodo_api_token",
+    "ZENODO_SANDBOX_API_TOKEN": "/run/secrets/zenodo_sandbox_api_token",
+}
+
+
+def resolve_zenodo_token(var_name="ZENODO_API_TOKEN"):
+    """Resolve a Zenodo API token from a Docker secret or the environment.
+
+    Checked in order, first hit wins:
+
+      1. ``<VAR>_FILE`` — path to a file holding the token. The conventional
+         way to point a container at a secret mounted somewhere non-default.
+      2. ``/run/secrets/<lowercased var>`` — where Swarm mounts a secret of
+         that name, so no configuration is needed in the common case.
+      3. ``<VAR>`` — the plain environment variable (back-compat).
+
+    Secret files are preferred over the env var because an env var is readable
+    by anyone who can run ``docker service inspect`` on the cluster, which is a
+    wider audience than the people who should hold a publishing credential
+    (#191). The env var still works so an existing deployment keeps running.
+
+    Returns:
+        The token string, or None when no source yields a non-empty value.
+    """
+    path = os.environ.get(f"{var_name}_FILE") or _SECRET_PATHS.get(var_name)
+    if path:
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                token = fh.read().strip()
+            if token:
+                return token
+            logger.warning("Zenodo token file %s is empty — falling back", path)
+        except FileNotFoundError:
+            pass  # Expected whenever the secret isn't mounted.
+        except OSError as e:
+            logger.warning("Could not read Zenodo token file %s: %s", path, e)
+
+    token = (os.environ.get(var_name) or "").strip()
+    return token or None
+
 # #158 follow-up: container user lacks write bit on the gluster-backed
 # /app/data mount. Successful Zenodo publishes must never appear to fail
 # just because we can't persist the local meta file — fall back to /tmp/
@@ -63,9 +106,13 @@ def zenodo_publish(files: dict, metadata: dict, existing_deposition_id: int = No
         EnvironmentError: ZENODO_API_TOKEN not set
         requests.HTTPError: Zenodo API returned non-2xx
     """
-    token = os.environ.get("ZENODO_API_TOKEN")
+    token = resolve_zenodo_token("ZENODO_API_TOKEN")
     if not token:
-        raise EnvironmentError("ZENODO_API_TOKEN environment variable is not set")
+        raise EnvironmentError(
+            "No Zenodo API token available — set the ZENODO_API_TOKEN environment "
+            "variable, mount a Docker secret at /run/secrets/zenodo_api_token, or "
+            "point ZENODO_API_TOKEN_FILE at a file containing the token"
+        )
 
     auth_header = {"Authorization": f"Bearer {token}"}
     json_header = {**auth_header, "Content-Type": "application/json"}
