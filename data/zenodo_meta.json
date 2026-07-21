@@ -1,12 +1,27 @@
 {
-  "deposition_id": 20184796,
-  "doi": "10.5281/zenodo.20184796",
+  "deposition_id": 21472670,
+  "doi": "10.5281/zenodo.21472670",
   "concept_doi": "10.5281/zenodo.20184643",
-  "published_at": "2026-05-14",
-  "version": "2026-05-14",
+  "published_at": "2026-07-21",
+  "version": "2026-07-21",
   "counts": {
-    "wp":       {"All": 125, "High": 79, "Medium": 44, "Low": 2},
-    "go":       {"All": 7,   "High": 2,  "Medium": 5,  "Low": 0},
-    "reactome": {"All": 2,   "High": 1,  "Medium": 1,  "Low": 0}
+    "wp": {
+      "All": 125,
+      "High": 79,
+      "Medium": 44,
+      "Low": 2
+    },
+    "go": {
+      "All": 11,
+      "High": 4,
+      "Medium": 7,
+      "Low": 0
+    },
+    "reactome": {
+      "All": 6,
+      "High": 2,
+      "Medium": 4,
+      "Low": 0
+    }
   }
 }
