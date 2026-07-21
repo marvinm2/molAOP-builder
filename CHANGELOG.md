@@ -27,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`GET /api/v1/aops` — the AOP list the Analyser's picker needs.** Until now nothing in the public API answered "which AOPs does this instance have mappings for?". A consumer had to page every mapping record, read `ke_aop_context`, and invert it — which yields AOP IDs but no titles, no total KE counts, and no per-resource breakdown. The Analyser did exactly this and fell back to AOP-Wiki SPARQL for the rest, so its AOP dropdown was never actually Builder-driven (molAOP-analyser#3).
+
+  The endpoint returns one row per AOP with `aop_title`, `ke_count`, `mapped_ke_count`, and a per-resource split (`wikipathways_ke_count` / `go_ke_count` / `reactome_ke_count`), sorted by mapped coverage so the best-covered AOPs come first. `?mapped_only=true` drops AOPs no curator has touched, `?q=` filters over ID and title, and pagination and `?format=csv` match the other v1 collections. Missing the membership snapshot degrades to an empty list rather than a 500, since that file is mounted at runtime rather than shipped in the image.
+
+- **Refreshed `data/ke_aop_membership.json`.** The snapshot behind `ke_aop_context` — and now behind `/api/v1/aops` — was generated on **10 March 2026** and had not been regenerated since, so every consumer of `ke_aop_context` was reading four-month-old AOP-Wiki membership. Re-running `scripts/precompute_ke_aop_membership.py` adds **125 KE-AOP memberships across 11 AOPs that were previously invisible** (1,567 → 1,599 KEs; 3,623 → 3,719 memberships) and loses none. Concretely: AOP 625 went from 15 KEs to 18, AOP 628 from 14 to 16, and AOP 638 appeared for the first time with 11 — it had been absent from the API's AOP context entirely.
+
 - **Zenodo release `2026-07-21`** — [10.5281/zenodo.21472670](https://doi.org/10.5281/zenodo.21472670), the second canonical version on the concept timeline. Counts: WikiPathways 125 (79 High / 44 Medium / 2 Low), GO 11 (4/7/0), Reactome 6 (2/4/0) — GO and Reactome roughly doubled since the 2026-05-14 deposit. CC0, same v3 structure (three per-resource ZIPs with GMT-by-confidence + Turtle, plus a top-level README). Published with the repo rename already in place, so the deposit description and bundled README carry the `molAOP-builder` URL.
 
 ### Security
