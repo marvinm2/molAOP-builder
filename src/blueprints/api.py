@@ -28,6 +28,7 @@ from src.core.schemas import (
     validate_request_data,
 )
 from src.core.config_loader import ConfigLoader
+from src.services import source_versions
 from src.utils.text import sanitize_log
 
 logger = logging.getLogger(__name__)
@@ -475,137 +476,48 @@ def get_pathway_options():
 @api_bp.route("/get_data_versions", methods=["GET"])
 @sparql_rate_limit
 def get_data_versions():
-    """Fetch version information from AOP-Wiki and WikiPathways SPARQL endpoints."""
+    """Report upstream release versions for the four source resources.
+
+    Delegates to :mod:`src.services.source_versions`, which is the single place
+    upstream releases are resolved (and is what the footer badges already use).
+
+    This route previously issued its own SPARQL against AOP-Wiki and
+    WikiPathways. That duplicate implementation drifted: it sent
+    ``Accept: application/json``, which both endpoints answer with HTTP 406, and
+    its handler only branched on ``status_code == 200`` — so a failure produced
+    an empty object with a 200 status and no log line (#204). Delegating removes
+    the second copy, picks up the 24 h cache, and extends coverage from two
+    resources to four (GO and Reactome were never reported here).
+
+    Response shape is unchanged in spirit but now consistent per resource::
+
+        {"wikipathways": {"source": "WikiPathways", "version": "2026-07-10",
+                          "unavailable": false}, ...}
+    """
+    labels = {
+        "wikipathways": "WikiPathways",
+        "gene_ontology": "Gene Ontology",
+        "reactome": "Reactome",
+        "aopwiki": "AOP-Wiki",
+    }
+
     try:
-        versions = {}
-        
-        # Get AOP-Wiki version info
-        try:
-            aop_query = """
-            PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-            PREFIX dc: <http://purl.org/dc/elements/1.1/>
-            PREFIX dcterms: <http://purl.org/dc/terms/>
-            
-            SELECT DISTINCT ?version ?date ?comment
-            WHERE {
-                ?dataset a <http://rdfs.org/ns/void#Dataset> .
-                OPTIONAL { ?dataset dcterms:hasVersion ?version }
-                OPTIONAL { ?dataset dcterms:created ?date }
-                OPTIONAL { ?dataset rdfs:comment ?comment }
-            } LIMIT 1
-            """
-            
-            aop_endpoint = "https://aopwiki.rdf.bigcat-bioinformatics.org/sparql"
-            # Accept must be application/sparql-results+json. Both SPARQL
-            # endpoints answer application/json with HTTP 406, which the
-            # status check below then dropped silently (see #204).
-            aop_response = requests.post(
-                aop_endpoint,
-                data={"query": aop_query},
-                headers={"Accept": "application/sparql-results+json"},
-                timeout=10
-            )
-
-            if aop_response.status_code != 200:
-                raise RuntimeError(
-                    f"SPARQL endpoint returned HTTP {aop_response.status_code}"
-                )
-
-            if aop_response.status_code == 200:
-                aop_data = aop_response.json()
-                if aop_data.get("results", {}).get("bindings"):
-                    result = aop_data["results"]["bindings"][0]
-                    versions["aop_wiki"] = {
-                        "source": "AOP-Wiki RDF",
-                        "version": result.get("version", {}).get("value", "Unknown"),
-                        "date": result.get("date", {}).get("value", "Unknown"),
-                        "comment": result.get("comment", {}).get("value", ""),
-                        "endpoint": aop_endpoint
-                    }
-                else:
-                    versions["aop_wiki"] = {
-                        "source": "AOP-Wiki RDF",
-                        "version": "Available",
-                        "date": "Unknown",
-                        "comment": "SPARQL endpoint accessible",
-                        "endpoint": aop_endpoint
-                    }
-                    
-        except Exception as e:
-            logger.warning("Could not fetch AOP-Wiki version: %s", e)
-            versions["aop_wiki"] = {
-                "source": "AOP-Wiki RDF",
-                "version": "Unknown",
-                "date": "Unknown",
-                "comment": f"Error: {str(e)}",
-                "endpoint": "https://aopwiki.rdf.bigcat-bioinformatics.org/sparql"
-            }
-        
-        # Get WikiPathways version info
-        try:
-            wp_query = """
-            PREFIX void: <http://rdfs.org/ns/void#>
-            PREFIX dcterms: <http://purl.org/dc/terms/>
-            PREFIX foaf: <http://xmlns.com/foaf/0.1/>
-            
-            SELECT DISTINCT ?version ?date ?title
-            WHERE {
-                ?dataset a void:Dataset .
-                OPTIONAL { ?dataset dcterms:hasVersion ?version }
-                OPTIONAL { ?dataset dcterms:created ?date }
-                OPTIONAL { ?dataset dcterms:title ?title }
-            } LIMIT 1
-            """
-            
-            wp_endpoint = "https://sparql.wikipathways.org/sparql"
-            # See the AOP-Wiki call above — application/json yields HTTP 406.
-            wp_response = requests.post(
-                wp_endpoint,
-                data={"query": wp_query},
-                headers={"Accept": "application/sparql-results+json"},
-                timeout=10
-            )
-
-            if wp_response.status_code != 200:
-                raise RuntimeError(
-                    f"SPARQL endpoint returned HTTP {wp_response.status_code}"
-                )
-
-            if wp_response.status_code == 200:
-                wp_data = wp_response.json()
-                if wp_data.get("results", {}).get("bindings"):
-                    result = wp_data["results"]["bindings"][0]
-                    versions["wikipathways"] = {
-                        "source": "WikiPathways",
-                        "version": result.get("version", {}).get("value", "Current"),
-                        "date": result.get("date", {}).get("value", "Unknown"),
-                        "comment": result.get("title", {}).get("value", ""),
-                        "endpoint": wp_endpoint
-                    }
-                else:
-                    versions["wikipathways"] = {
-                        "source": "WikiPathways",
-                        "version": "Current",
-                        "date": "Unknown",
-                        "comment": "SPARQL endpoint accessible",
-                        "endpoint": wp_endpoint
-                    }
-                    
-        except Exception as e:
-            logger.warning("Could not fetch WikiPathways version: %s", e)
-            versions["wikipathways"] = {
-                "source": "WikiPathways",
-                "version": "Unknown",
-                "date": "Unknown", 
-                "comment": f"Error: {str(e)}",
-                "endpoint": "https://sparql.wikipathways.org/sparql"
-            }
-        
-        return jsonify(versions), 200
-        
+        snapshot = source_versions.snapshot()
     except Exception as e:
+        # snapshot() is documented never to raise; treat a breach as a real error
+        # rather than silently returning an empty body as the old code did.
         logger.error("Error fetching data versions: %s", e)
         return jsonify({"error": "Failed to load data version information"}), 500
+
+    versions = {
+        key: {
+            "source": label,
+            "version": snapshot.get(key, {}).get("version", "unavailable"),
+            "unavailable": snapshot.get(key, {}).get("unavailable", True),
+        }
+        for key, label in labels.items()
+    }
+    return jsonify(versions), 200
 
 
 @api_bp.route("/submit_proposal", methods=["POST"])

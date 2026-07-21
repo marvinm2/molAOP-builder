@@ -289,7 +289,7 @@ tests/                  # Pytest test suite
 | `/get_pathway_options` | GET | Fetch pathway options | SPARQL |
 | `/get_aop_options` | GET | Fetch AOP options | SPARQL |
 | `/get_aop_kes/<aop_id>` | GET | Fetch Key Events for a specific AOP | SPARQL |
-| `/get_data_versions` | GET | Fetch data source version info | SPARQL |
+| `/get_data_versions` | GET | Upstream release versions for all four source resources (WikiPathways, GO, Reactome, AOP-Wiki) | `SourceVersionService` (24 h cache) |
 | `/suggest_pathways/<ke_id>` | GET | Pathway suggestions for a Key Event | SPARQL |
 | `/search_pathways` | GET | Full-text pathway search with fuzzy matching | SPARQL |
 | `/ke_genes/<ke_id>` | GET | Genes associated with a Key Event | SPARQL |
