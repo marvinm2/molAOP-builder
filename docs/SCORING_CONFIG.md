@@ -1,8 +1,8 @@
 # Scoring Configuration Reference
 
-This document is the parameter reference for `config/scoring_config.yaml`.
+This document is the parameter reference for `scoring_config.yaml`.
 
-**Last Updated**: 2026-05-10
+**Last Updated**: 2026-07-21
 **Configuration Version**: 1.5.0 (pure-semantic ranking)
 
 > **v1.5 ranking shift (released 2026-05-10).** The pathway and GO
@@ -27,12 +27,13 @@ This document is the parameter reference for `config/scoring_config.yaml`.
 
 1. [Overview](#overview)
 2. [v1.5 Ranking — Pure-Semantic + Ontology Boost](#v15-ranking--pure-semantic--ontology-boost)
-3. [Pathway Suggestion Scoring (legacy YAML keys)](#pathway-suggestion-scoring)
-4. [KE-Pathway Assessment Scoring](#ke-pathway-assessment-scoring)
-5. [Hybrid Scoring Weights (zeroed in v1.5)](#hybrid-scoring-weights)
-6. [Parameter Interactions](#parameter-interactions)
-7. [Use Cases and Examples](#use-cases-and-examples)
-8. [Troubleshooting](#troubleshooting)
+3. [GO Hierarchy: IC Boost and Ancestor Redundancy](#go-hierarchy-ic-boost-and-ancestor-redundancy)
+4. [Pathway Suggestion Scoring (legacy YAML keys)](#pathway-suggestion-scoring)
+5. [KE-Pathway Assessment Scoring](#ke-pathway-assessment-scoring)
+6. [Hybrid Scoring Weights (zeroed in v1.5)](#hybrid-scoring-weights)
+7. [Parameter Interactions](#parameter-interactions)
+8. [Use Cases and Examples](#use-cases-and-examples)
+9. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -49,7 +50,7 @@ The system has two independent scoring stages:
    High / Medium / Low confidence label. Configured under
    `ke_pathway_assessment` and `ke_go_assessment`.
 
-Both stages are configurable via `config/scoring_config.yaml`.
+Both stages are configurable via `scoring_config.yaml`.
 
 ## v1.5 Ranking — Pure-Semantic + Ontology Boost
 
@@ -79,6 +80,62 @@ pathway_suggestion:
 The runtime never multiplies by the legacy `weights` block in v1.5;
 candidates are sorted purely by the transformed BioBERT score plus the
 optional `ontology_post_combine_boost` additive tie-breaker.
+
+---
+
+## GO Hierarchy: IC Boost and Ancestor Redundancy
+
+Both GO namespaces (`go_bp`, `go_mf`) carry a `hierarchy` block. Two values
+in it are easy to misread, so they are stated explicitly here.
+
+```yaml
+go_bp:                  # identical block under go_mf
+  hierarchy:
+    enabled: true
+    ic_weight: 0.0              # IC boost DISABLED — see below
+    redundancy_threshold: 0.10  # ancestor kept only if it beats its child by >10%
+```
+
+### `ic_weight: 0.0` — the information-content boost is deliberately off
+
+The IC boost multiplies each candidate by `(1 + ic_weight × IC_norm)` to
+favour more specific GO terms. **With `ic_weight: 0.0` the multiplier is
+identically 1.0, so IC never re-ranks anything.** This is the intended
+deployed behaviour, not a misconfiguration.
+
+The reasoning follows from the v1.5 pure-semantic move: once BioBERT
+similarity is the sole ranking signal, re-ranking by ontology depth on top
+of it promotes over-specific descendants above the term a curator actually
+meant. A Key Event phrased at umbrella level ("Cell death") should return
+the umbrella term, and an IC boost actively fights that.
+
+The IC pipeline (`scripts/precompute_go_hierarchy.py`, `make go-hierarchy`)
+is still run and its output still shipped, for two reasons: the same
+hierarchy file supplies the `depth` value the UI displays on each suggestion
+card, and it supplies the ancestor sets the redundancy filter needs.
+Re-enabling the boost is a one-value config change requiring no code edit.
+
+> Note: CHANGELOG 2.7.0 described the IC boost as "preserved" under v1.5.
+> That wording is about the *machinery* being preserved, not about the boost
+> being active. It read as the latter and caused #192; this section is the
+> authoritative statement.
+
+### `redundancy_threshold: 0.10`
+
+An ancestor term is pruned from the suggestion list when a descendant of it
+is also present, **unless** the ancestor's score exceeds the descendant's by
+more than this fraction. At 0.10 the filter prunes fairly aggressively,
+which is what pure-semantic ranking calls for — sibling terms in the same
+subtree score within a few points of each other, and a looser 0.20 threshold
+left near-duplicate umbrella terms cluttering the list.
+
+One exception overrides the filter entirely: an ancestor whose label matches
+the direction-stripped KE title is never pruned (#193). For a generic KE the
+umbrella term *is* the intended annotation.
+
+`tests/test_scoring_config_documented_defaults.py` pins both values against
+the YAML, the code fallback defaults, and their behavioural consequence, so
+these three surfaces cannot drift apart again silently.
 
 ---
 
