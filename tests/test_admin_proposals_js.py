@@ -194,3 +194,74 @@ class TestAdminProposalsJs:
             assert "grid-template-columns" in content, (
                 f"{tpl_name}: missing grid-template-columns two-column layout"
             )
+
+    def test_go_assessment_rendered_in_panel(self):
+        """Issue #213: the shared review panel must render GO's three-dimension
+        assessment, not just the WP four-answer one.
+
+        The panel used to test only proposed_relationship/_basis/_specificity/
+        _coverage — columns that exist on `proposals` but not on
+        `ke_go_proposals` — so every GO proposal fell through to the
+        "legacy proposal" branch even when its three answers were stored.
+        """
+        tests_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(tests_dir)
+        js_path = os.path.join(project_root, "static", "js", "admin_proposals.js")
+        content = open(js_path, encoding="utf-8").read()
+
+        for field in [
+            "proposed_connection_score",
+            "proposed_specificity_score",
+            "proposed_evidence_score",
+        ]:
+            assert field in content, (
+                f"admin_proposals.js: GO assessment field {field} never read — "
+                "GO proposals will render as 'No assessment submitted'"
+            )
+
+        # The GO branch must be evaluated before the legacy fallback.
+        assert "hasGoAssessment" in content, (
+            "admin_proposals.js: no GO-specific assessment branch"
+        )
+        # Anchor on the branch statement and the fallback's rendered markup so
+        # the explanatory comments above them do not satisfy the assertion.
+        go_branch = content.index("if (hasGoAssessment)")
+        legacy = content.index("No assessment submitted (legacy proposal)</div>")
+        assert go_branch < legacy, (
+            "admin_proposals.js: GO assessment branch must precede the "
+            "legacy-proposal fallback"
+        )
+
+    def test_go_template_emits_go_assessment_attrs(self):
+        """Issue #213: the GO queue's rows must carry GO's assessment columns.
+
+        The row attributes feed _rowToProposal, which backs the panel's fast
+        path. admin_go_proposals.html previously copied the WP four-answer
+        attributes verbatim; those reference columns ke_go_proposals does not
+        have, so they rendered as empty strings on every row.
+        """
+        tests_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(tests_dir)
+        path = os.path.join(project_root, "templates", "admin_go_proposals.html")
+        content = open(path, encoding="utf-8").read()
+
+        # Match on `attr=` so prose in comments cannot satisfy the assertion.
+        for attr in [
+            "data-proposed-connection-score=",
+            "data-proposed-specificity-score=",
+            "data-proposed-evidence-score=",
+        ]:
+            assert attr in content, (
+                f"admin_go_proposals.html: missing {attr}"
+            )
+
+        # The WP-shaped attributes are structurally always empty here.
+        for attr in [
+            "data-proposed-relationship=",
+            "data-proposed-basis=",
+            "data-proposed-coverage=",
+        ]:
+            assert attr not in content, (
+                f"admin_go_proposals.html: {attr} references a column "
+                "ke_go_proposals does not have"
+            )
