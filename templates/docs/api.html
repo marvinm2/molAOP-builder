@@ -247,7 +247,16 @@ curl https://molaop-builder.vhp4safety.nl/exports/gmt/ke-reactome-centric -o ke-
 
 <p>All six GMT routes accept an optional <code>min_confidence</code> filter
 (<code>high</code>, <code>medium</code> or <code>low</code>); omit it for every approved
-mapping regardless of tier.</p>
+mapping regardless of tier. It is a <strong>minimum</strong>, so
+<code>medium</code> returns medium- <em>and</em> high-confidence mappings, and
+<code>low</code> is equivalent to omitting it. Mappings with no recorded
+confidence are always included.</p>
+
+<p class="note"><strong>Changed:</strong> before 2026-07-22 this parameter selected a
+single tier, so <code>min_confidence=medium</code> returned medium-confidence
+mappings <em>only</em> and silently dropped the high-confidence ones. If you are
+holding a GMT downloaded with <code>medium</code> or <code>low</code> before that
+date, it is missing the better-evidenced mappings — re-download it.</p>
 
 <pre><code>curl "https://molaop-builder.vhp4safety.nl/exports/gmt/ke-wp-centric?min_confidence=high" -o ke-wp-high.gmt</code></pre>
 

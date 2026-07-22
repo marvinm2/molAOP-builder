@@ -1565,15 +1565,18 @@ def regenerate_exports():
         today = datetime.date.today().isoformat()
 
         files_written = []
+        # `confidence=` (exact tier), not `min_confidence=` (threshold since
+        # #206): these _All/_High/_Medium/_Low files are a partition, matching
+        # the Zenodo deposit layout.
         for conf_label, conf_filter in [("All", None), ("High", "high"), ("Medium", "medium"), ("Low", "low")]:
             # KE-WP GMT
-            gmt_wp = generate_ke_wp_gmt(wp_mappings, cache_model=cache_model_ref, min_confidence=conf_filter)
+            gmt_wp = generate_ke_wp_gmt(wp_mappings, cache_model=cache_model_ref, confidence=conf_filter)
             if gmt_wp:
                 p = cache_dir / f"KE-WP_{today}_{conf_label}.gmt"
                 p.write_text(gmt_wp, encoding="utf-8")
                 files_written.append(p.name)
             # KE-GO GMT
-            gmt_go = generate_ke_go_gmt(go_mappings, min_confidence=conf_filter)
+            gmt_go = generate_ke_go_gmt(go_mappings, confidence=conf_filter)
             if gmt_go:
                 p = cache_dir / f"KE-GO_{today}_{conf_label}.gmt"
                 p.write_text(gmt_go, encoding="utf-8")

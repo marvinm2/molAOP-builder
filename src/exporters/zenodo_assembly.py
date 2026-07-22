@@ -167,7 +167,13 @@ def build_resource_zip(
             ("Medium", "medium"),
             ("Low", "low"),
         ):
-            content = gmt_fn(mappings, min_confidence=conf, **gmt_kwargs)
+            # `confidence=`, not `min_confidence=`: the deposit's tier files are
+            # a partition, which is what build_readme() documents and what
+            # counts() histograms. Since #206 min_confidence is a threshold, so
+            # using it here would make _Medium.gmt cumulative and _Low.gmt a
+            # byte-copy of _All.gmt, contradicting the README of a citable,
+            # permanent deposit.
+            content = gmt_fn(mappings, confidence=conf, **gmt_kwargs)
             if content:
                 zf.writestr(f"{prefix}/{prefix}_{today}_{label}.gmt", content)
         ttl_content = ttl_fn(mappings)

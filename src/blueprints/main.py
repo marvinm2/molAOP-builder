@@ -845,7 +845,11 @@ def _get_or_generate_gmt(mapping_type: str, min_confidence: str = None):
     if min_confidence not in _VALID_MIN_CONFIDENCE:
         abort(400)
     today = datetime.today().date().isoformat()
-    tier = min_confidence.capitalize() if min_confidence else "All"
+    # "MinHigh", not "High": since #206 this parameter is a threshold, and the
+    # admin/Zenodo bundles write exact-tier files under the bare _High/_Medium/
+    # _Low names into the same directory. Distinct tokens stop a threshold file
+    # and a partition file of the same day from being mistaken for each other.
+    tier = f"Min{min_confidence.capitalize()}" if min_confidence else "All"
     filename = f"KE-{mapping_type.upper()}_{today}_{tier}.gmt"
     # werkzeug.security.safe_join is on CodeQL's recognised path-injection
     # sanitizer list — it returns None if the joined path would escape the
@@ -885,7 +889,7 @@ def _get_or_generate_gmt(mapping_type: str, min_confidence: str = None):
 
 @main_bp.route("/exports/gmt/ke-wp")
 def download_ke_wp_gmt():
-    """Download KE-WP GMT file. ?min_confidence=High|Medium|Low for filtered versions."""
+    """Download KE-WP GMT file. ?min_confidence=High|Medium|Low is a minimum: High yields high only, Medium yields medium and high, Low yields all."""
     min_conf = request.args.get("min_confidence", "").lower() or None
     cache_path, filename = _get_or_generate_gmt("wp", min_conf)
     if not cache_path.exists() or cache_path.stat().st_size == 0:
@@ -895,7 +899,7 @@ def download_ke_wp_gmt():
 
 @main_bp.route("/exports/gmt/ke-go")
 def download_ke_go_gmt():
-    """Download KE-GO GMT file. ?min_confidence=High|Medium|Low for filtered versions."""
+    """Download KE-GO GMT file. ?min_confidence=High|Medium|Low is a minimum: High yields high only, Medium yields medium and high, Low yields all."""
     min_conf = request.args.get("min_confidence", "").lower() or None
     cache_path, filename = _get_or_generate_gmt("go", min_conf)
     if not cache_path.exists() or cache_path.stat().st_size == 0:
@@ -905,7 +909,7 @@ def download_ke_go_gmt():
 
 @main_bp.route("/exports/gmt/ke-wp-centric")
 def download_ke_wp_centric_gmt():
-    """KE-centric WP GMT: one row per KE, genes unioned across all WP mappings."""
+    """KE-centric WP GMT: one row per KE, genes unioned across all WP mappings. ?min_confidence=High|Medium|Low is a minimum (Medium yields medium and high)."""
     min_conf = request.args.get("min_confidence", "").lower() or None
     cache_path, filename = _get_or_generate_gmt("wp-centric", min_conf)
     if not cache_path.exists() or cache_path.stat().st_size == 0:
@@ -915,7 +919,7 @@ def download_ke_wp_centric_gmt():
 
 @main_bp.route("/exports/gmt/ke-go-centric")
 def download_ke_go_centric_gmt():
-    """KE-centric GO GMT: one row per KE, genes unioned across all GO mappings."""
+    """KE-centric GO GMT: one row per KE, genes unioned across all GO mappings. ?min_confidence=High|Medium|Low is a minimum (Medium yields medium and high)."""
     min_conf = request.args.get("min_confidence", "").lower() or None
     cache_path, filename = _get_or_generate_gmt("go-centric", min_conf)
     if not cache_path.exists() or cache_path.stat().st_size == 0:
@@ -925,7 +929,7 @@ def download_ke_go_centric_gmt():
 
 @main_bp.route("/exports/gmt/ke-reactome")
 def download_ke_reactome_gmt():
-    """Download KE-Reactome GMT file. ?min_confidence=High|Medium|Low for filtered versions."""
+    """Download KE-Reactome GMT file. ?min_confidence=High|Medium|Low is a minimum: High yields high only, Medium yields medium and high, Low yields all."""
     min_conf = request.args.get("min_confidence", "").lower() or None
     cache_path, filename = _get_or_generate_gmt("reactome", min_conf)
     if not cache_path.exists() or cache_path.stat().st_size == 0:
@@ -935,7 +939,7 @@ def download_ke_reactome_gmt():
 
 @main_bp.route("/exports/gmt/ke-reactome-centric")
 def download_ke_reactome_centric_gmt():
-    """KE-centric Reactome GMT: one row per KE, genes unioned across all Reactome mappings."""
+    """KE-centric Reactome GMT: one row per KE, genes unioned across all Reactome mappings. ?min_confidence=High|Medium|Low is a minimum (Medium yields medium and high)."""
     min_conf = request.args.get("min_confidence", "").lower() or None
     cache_path, filename = _get_or_generate_gmt("reactome-centric", min_conf)
     if not cache_path.exists() or cache_path.stat().st_size == 0:

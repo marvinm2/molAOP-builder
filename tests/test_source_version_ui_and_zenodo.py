@@ -245,8 +245,11 @@ def test_resource_zip_includes_source_versions_sidecar(_OK_MANIFEST):
     from scripts.publish_zenodo import _build_resource_zip, _slice_source_versions
 
     # Build a tiny KE-WP zip using stubbed generators so we don't hit SPARQL.
-    def _stub_gmt(mappings, min_confidence=None, **_):
-        return "KE_X\tdesc\tBRCA1\tTP53\n" if not min_confidence else ""
+    # `confidence` is named explicitly: _build_resource_zip passes the exact
+    # tier under that name since #206, and absorbing it into **_ would make
+    # this stub emit content for every tier.
+    def _stub_gmt(mappings, min_confidence=None, confidence=None, **_):
+        return "KE_X\tdesc\tBRCA1\tTP53\n" if not (min_confidence or confidence) else ""
 
     def _stub_ttl(mappings):
         return "@prefix : <https://example/> .\n:m a :Thing .\n"
@@ -267,8 +270,8 @@ def test_resource_zip_omits_sidecar_when_no_slice(_OK_MANIFEST):
     """If the caller passes no slice, no sidecar is emitted."""
     from scripts.publish_zenodo import _build_resource_zip
 
-    def _stub_gmt(mappings, min_confidence=None, **_):
-        return "row\n" if not min_confidence else ""
+    def _stub_gmt(mappings, min_confidence=None, confidence=None, **_):
+        return "row\n" if not (min_confidence or confidence) else ""
 
     def _stub_ttl(mappings):
         return "@prefix : <x> .\n"

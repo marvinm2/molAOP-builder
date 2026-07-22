@@ -158,13 +158,25 @@ def test_generate_ke_centric_reactome_gmt_sorts_by_ke_number(sample_mappings, ge
 
 
 def test_generate_ke_centric_reactome_gmt_min_confidence(sample_mappings, gene_annotations_file):
+    """min_confidence='medium' is a threshold: u1 (High) and u2 (Medium) both
+    survive, and both are KE 1, so one row — but a wider one than under the old
+    exact-tier behaviour, which kept u2 alone (#206)."""
     out = generate_ke_centric_reactome_gmt(
         sample_mappings, gene_annotations_path=gene_annotations_file, min_confidence="medium"
     )
     lines = [l for l in out.split("\n") if l]
-    # Only u2 (Medium) survives the filter -> KE 1 with BRCA1/BRCA2/TP53
     assert len(lines) == 1
     assert lines[0].startswith("KE1\t")
+
+    genes = set(lines[0].split("\t")[2:])
+    medium_only = generate_ke_centric_reactome_gmt(
+        sample_mappings, gene_annotations_path=gene_annotations_file, confidence="medium"
+    )
+    medium_genes = set(medium_only.split("\n")[0].split("\t")[2:])
+    assert medium_genes < genes, (
+        "The medium+high threshold row must be a strict superset of the "
+        "medium-only partition row"
+    )
 
 
 # ---- generate_ke_reactome_turtle (RDF/Turtle) --------------------------------
