@@ -288,7 +288,7 @@ jobs:
         cat performance-main.txt | grep "Requests per second" || echo "Main page perf test failed"
 
     - name: Upload performance results
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       if: always()
       with:
         name: performance-results
@@ -367,7 +367,7 @@ jobs:
         echo "Build date: $(date)" >> deployment/README.txt
 
     - name: Upload deployment artifact
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: deployment-files
         path: deployment/
