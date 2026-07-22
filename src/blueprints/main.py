@@ -5,6 +5,8 @@ Handles core application routes and page rendering
 import json as json_lib
 import logging
 import os
+import re
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -12,6 +14,7 @@ from flask import Blueprint, abort, current_app, make_response, redirect, render
 from werkzeug.security import safe_join
 
 from src.blueprints.admin import _get_admin_users
+from src.exporters.gmt_exporter import export_revision_id, gmt_provenance_header
 from src.services.monitoring import monitor_performance
 from src.utils.text import sanitize_log
 
@@ -41,11 +44,13 @@ EXPORT_CACHE_DIR = Path("static/exports")
 _EXPORTS_BASE = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'static', 'exports'))
 
 # NOTE (#211): the five *.gmt entries below are dead. The GMT cache names its
-# files with *today's* date (see _get_or_generate_gmt), so a file called
-# KE-WP_2026-03-04_All.gmt has not existed since that day and the preview
-# silently returns {"available": false}. Only the three .ttl entries, whose
-# filenames are not date-stamped, actually resolve. Left as-is here because the
-# fix belongs with the GMT cache-naming change; tracked separately.
+# files with today's date and, since #212, a revision segment as well (see
+# _get_or_generate_gmt), so a file called KE-WP_2026-03-04_All.gmt has not
+# existed since that day and the preview silently returns
+# {"available": false}. Only the three .ttl entries, whose filenames are not
+# date-stamped, actually resolve. A literal allowlist cannot name a file whose
+# identity is the data it contains, so fixing this means resolving the current
+# export by glob rather than by constant; tracked separately.
 PREVIEW_ALLOWLIST = {
     # WikiPathways
     ("wp", "gmt"):          os.path.join(_EXPORTS_BASE, "KE-WP_2026-03-04_All.gmt"),
@@ -862,9 +867,106 @@ _VALID_MAPPING_TYPES = {
 }
 _VALID_MIN_CONFIDENCE = {None, "high", "medium", "low"}
 
+# Files under data/ whose contents end up inside a generated GMT. They are a
+# bind mount in every deployment (docker-compose mounts ./data), so a corpus
+# refresh lands without an image rebuild and would otherwise leave the cached
+# GMT describing the previous corpus. WikiPathways gene sets are not listed:
+# they come from the live SPARQL endpoint via CacheModel, not from a file.
+#
+# Listing a file here is only half of what "a corpus update invalidates the
+# export" requires: it makes this layer regenerate, but the generator has to
+# actually re-read the file. Reactome does (`_load_reactome_annotations` opens
+# it every call); GO goes through src/services/go_annotation_index, whose
+# process-wide cache had to learn to reload when its sources change. Without
+# that, regeneration reproduced the old gene sets and stamped the new corpus
+# fingerprint onto them — an export asserting a corpus it was not built from,
+# and one the application would never retry. Any corpus added here must be
+# checked the same way, with a sentinel gene rather than by reading the loader.
+_GMT_CORPUS_FILES = {
+    "go": (
+        "go_bp_gene_annotations.json",
+        "go_bp_gene_annotations_propagated.json",
+        "go_bp_hierarchy.json",
+        "go_mf_gene_annotations.json",
+        "go_mf_gene_annotations_propagated.json",
+        "go_mf_hierarchy.json",
+    ),
+    "reactome": ("reactome_gene_annotations.json",),
+}
+
+_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
+
+
+def _gmt_source_model(mapping_type: str):
+    """The mapping model a GMT type is generated from.
+
+    Read through the module globals on every call: app initialisation assigns
+    them after import, and the tests monkeypatch them.
+    """
+    if mapping_type.startswith("wp"):
+        return mapping_model
+    if mapping_type.startswith("go"):
+        return go_mapping_model
+    return reactome_mapping_model
+
+
+def _corpus_fingerprint(filenames) -> str:
+    """(size, mtime) of each gene-annotation file backing a GMT type."""
+    parts = []
+    for name in filenames:
+        try:
+            st = (_DATA_DIR / name).stat()
+            # Nanosecond mtime, matching go_annotation_index._source_fingerprint.
+            # int(st.st_mtime) has 1-second resolution, so a same-size corpus
+            # edit within a second would reload the GO index but leave this
+            # export fingerprint unchanged — the GMT would then disagree with
+            # /api/ke-genes, the exact divergence class this cache exists to close.
+            parts.append(f"{name}:{st.st_size}:{st.st_mtime_ns}")
+        except OSError:
+            parts.append(f"{name}:-")
+    return ";".join(parts)
+
+
+def _gmt_revision(mapping_type: str):
+    """Fingerprint of everything a GMT's content depends on, or None if unknown.
+
+    None means "cannot tell" and is treated as stale by the caller, so an
+    unavailable model or an unreadable table costs a regeneration rather than
+    silently pinning a stale file.
+    """
+    model = _gmt_source_model(mapping_type)
+    revision_fn = getattr(model, "revision", None)
+    if not callable(revision_fn):
+        return None
+    try:
+        table_revision = revision_fn()
+    except Exception as e:
+        logger.warning("Could not determine mapping revision for KE-%s GMT: %s", mapping_type, e)
+        return None
+    corpus = _corpus_fingerprint(_GMT_CORPUS_FILES.get(mapping_type.split("-")[0], ()))
+    return f"{table_revision}|{corpus}"
+
 
 def _get_or_generate_gmt(mapping_type: str, min_confidence: str = None):
-    """Return (path, filename) for GMT file, generating it if not cached."""
+    """Return (path, filename) for GMT file, regenerating it when the data moved on.
+
+    The cache used to be write-once per calendar day: the filename carried
+    today's date and the only staleness test was `if not cache_path.exists()`.
+    Approving, editing, rejecting or deleting a mapping therefore had no effect
+    on these files until midnight, while /api/v1/*-mappings reflected the change
+    at once — two public surfaces of the same database disagreeing silently, for
+    up to 24 hours (#212). It bites hardest on the molAOP Analyser, which reads
+    its GO and Reactome gene sets from here but its WikiPathways mappings from
+    the REST API, so a mid-curation run mixes today's WP with yesterday's GO and
+    Reactome and reports all three as current.
+
+    Staleness is now decided by a revision fingerprint recorded in a sidecar
+    next to the cache file, the same mechanism the Turtle exports got in #211.
+    Fingerprinting the source rather than hooking the write paths is deliberate:
+    it covers approval, rejection, admin edit, deletion and accepted change
+    proposals alike, including any write path added later, because it asks the
+    table what it holds instead of trusting callers to remember to invalidate.
+    """
     from src.exporters.gmt_exporter import (
         generate_ke_wp_gmt, generate_ke_go_gmt,
         generate_ke_centric_wp_gmt, generate_ke_centric_go_gmt,
@@ -883,7 +985,15 @@ def _get_or_generate_gmt(mapping_type: str, min_confidence: str = None):
     # _Low names into the same directory. Distinct tokens stop a threshold file
     # and a partition file of the same day from being mistaken for each other.
     tier = f"Min{min_confidence.capitalize()}" if min_confidence else "All"
-    filename = f"KE-{mapping_type.upper()}_{today}_{tier}.gmt"
+    revision = _gmt_revision(mapping_type)
+    # The date alone used to identify the content by accident: the file was
+    # written once per day, so every download that day returned the same bytes.
+    # Now that the cache correctly follows the mapping table, the date no longer
+    # pins anything — hence the revision segment, so a downloaded file and the
+    # analysis log that names it still say which mapping state was consumed.
+    rev_id = export_revision_id(revision)
+    stem = f"KE-{mapping_type.upper()}_{today}_{tier}"
+    filename = f"{stem}_r{rev_id}.gmt"
     # werkzeug.security.safe_join is on CodeQL's recognised path-injection
     # sanitizer list — it returns None if the joined path would escape the
     # base directory. Combined with the entry whitelist above, this is
@@ -892,7 +1002,22 @@ def _get_or_generate_gmt(mapping_type: str, min_confidence: str = None):
     if safe is None:
         abort(404)
     cache_path = Path(safe)
-    if not cache_path.exists():
+    stamp_path = Path(str(cache_path) + ".rev")
+
+    cached_revision = None
+    if stamp_path.exists():
+        try:
+            cached_revision = stamp_path.read_text(encoding="utf-8").strip()
+        except Exception:
+            cached_revision = None
+
+    stale = (
+        not cache_path.exists()
+        or revision is None
+        or cached_revision != revision
+    )
+
+    if stale:
         EXPORT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         if mapping_type == "wp":
             mappings = mapping_model.get_all_mappings() if mapping_model else []
@@ -913,11 +1038,76 @@ def _get_or_generate_gmt(mapping_type: str, min_confidence: str = None):
             mappings = go_mapping_model.get_all_mappings() if go_mapping_model else []
             content = generate_ke_go_gmt(mappings, min_confidence=min_confidence)
         if content:
-            cache_path.write_text(content, encoding="utf-8")
+            header = gmt_provenance_header(
+                f"KE-{mapping_type.upper()}",
+                revision=revision,
+                min_confidence=min_confidence,
+            )
+            cache_path.write_text(header + content, encoding="utf-8")
         else:
-            # Write empty placeholder so next request doesn't re-query
+            # Write empty placeholder so next request doesn't re-query. No
+            # header here: the download routes treat a zero-byte cache file as
+            # "nothing to serve" and answer 503, and a file of comment lines
+            # would be served as a successful but gene-free export.
             cache_path.write_text("", encoding="utf-8")
+        if revision is not None:
+            try:
+                stamp_path.write_text(revision, encoding="utf-8")
+            except Exception as e:
+                # A cache that cannot record its revision regenerates on every
+                # request — slower, never wrong.
+                logger.warning("Could not write export revision stamp %s: %s", stamp_path, e)
+        _prune_superseded_gmt(stem, cache_path)
     return cache_path, filename
+
+
+# Cache files older than this whose revision has been superseded are removed.
+# Not zero: a concurrent request may have decided to serve the file this one is
+# replacing, and an hour is far longer than that window while still keeping the
+# export directory to a day's working set rather than one file per approval.
+_GMT_PRUNE_AFTER_SECONDS = 3600
+
+
+def _prune_superseded_gmt(stem: str, keep: Path) -> None:
+    """Drop older revisions of the same export, so the cache stays bounded.
+
+    Putting the revision in the filename means a new file per mapping-table
+    change instead of one per day. That is the point — old downloads stay
+    identifiable — but nothing would ever overwrite them.
+    """
+    try:
+        for path in EXPORT_CACHE_DIR.glob(f"{stem}_r*.gmt"):
+            if path == keep:
+                continue
+            try:
+                if time.time() - path.stat().st_mtime < _GMT_PRUNE_AFTER_SECONDS:
+                    continue
+                path.unlink()
+                Path(str(path) + ".rev").unlink(missing_ok=True)
+            except OSError:
+                continue
+    except Exception as e:
+        logger.warning("Could not prune superseded GMT exports for %s: %s", stem, e)
+
+
+_REV_IN_FILENAME_RE = re.compile(r"_r([0-9a-f]{16})\.gmt$")
+
+
+def _send_gmt(cache_path: Path, filename: str):
+    """Serve a cached GMT, advertising its revision in a response header.
+
+    The revision is already in the filename and in the file's own comment
+    block; the header is for clients that stream the body without ever
+    touching either, which is exactly what the molAOP Analyser does.
+    """
+    response = send_file(
+        str(cache_path), as_attachment=True, download_name=filename,
+        mimetype="text/plain",
+    )
+    match = _REV_IN_FILENAME_RE.search(filename)
+    if match:
+        response.headers["X-Export-Revision"] = match.group(1)
+    return response
 
 
 @main_bp.route("/exports/gmt/ke-wp")
@@ -927,7 +1117,7 @@ def download_ke_wp_gmt():
     cache_path, filename = _get_or_generate_gmt("wp", min_conf)
     if not cache_path.exists() or cache_path.stat().st_size == 0:
         return jsonify({"error": "No KE-WP mappings available or WikiPathways SPARQL unavailable"}), 503
-    return send_file(str(cache_path), as_attachment=True, download_name=filename, mimetype="text/plain")
+    return _send_gmt(cache_path, filename)
 
 
 @main_bp.route("/exports/gmt/ke-go")
@@ -937,7 +1127,7 @@ def download_ke_go_gmt():
     cache_path, filename = _get_or_generate_gmt("go", min_conf)
     if not cache_path.exists() or cache_path.stat().st_size == 0:
         return jsonify({"error": "No KE-GO mappings available"}), 503
-    return send_file(str(cache_path), as_attachment=True, download_name=filename, mimetype="text/plain")
+    return _send_gmt(cache_path, filename)
 
 
 @main_bp.route("/exports/gmt/ke-wp-centric")
@@ -947,7 +1137,7 @@ def download_ke_wp_centric_gmt():
     cache_path, filename = _get_or_generate_gmt("wp-centric", min_conf)
     if not cache_path.exists() or cache_path.stat().st_size == 0:
         return jsonify({"error": "No KE-WP mappings available or WikiPathways SPARQL unavailable"}), 503
-    return send_file(str(cache_path), as_attachment=True, download_name=filename, mimetype="text/plain")
+    return _send_gmt(cache_path, filename)
 
 
 @main_bp.route("/exports/gmt/ke-go-centric")
@@ -957,7 +1147,7 @@ def download_ke_go_centric_gmt():
     cache_path, filename = _get_or_generate_gmt("go-centric", min_conf)
     if not cache_path.exists() or cache_path.stat().st_size == 0:
         return jsonify({"error": "No KE-GO mappings available"}), 503
-    return send_file(str(cache_path), as_attachment=True, download_name=filename, mimetype="text/plain")
+    return _send_gmt(cache_path, filename)
 
 
 @main_bp.route("/exports/gmt/ke-reactome")
@@ -967,7 +1157,7 @@ def download_ke_reactome_gmt():
     cache_path, filename = _get_or_generate_gmt("reactome", min_conf)
     if not cache_path.exists() or cache_path.stat().st_size == 0:
         return jsonify({"error": "No KE-Reactome mappings available"}), 503
-    return send_file(str(cache_path), as_attachment=True, download_name=filename, mimetype="text/plain")
+    return _send_gmt(cache_path, filename)
 
 
 @main_bp.route("/exports/gmt/ke-reactome-centric")
@@ -977,7 +1167,7 @@ def download_ke_reactome_centric_gmt():
     cache_path, filename = _get_or_generate_gmt("reactome-centric", min_conf)
     if not cache_path.exists() or cache_path.stat().st_size == 0:
         return jsonify({"error": "No KE-Reactome mappings available"}), 503
-    return send_file(str(cache_path), as_attachment=True, download_name=filename, mimetype="text/plain")
+    return _send_gmt(cache_path, filename)
 
 
 def _get_or_generate_turtle(filename, model, generator, **generator_kwargs):

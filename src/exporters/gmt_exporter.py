@@ -3,6 +3,8 @@ GMT file generation for KE-WP and KE-GO mapping types.
 
 Pure Python module — no Flask dependency. Called by routes in later plans.
 """
+import datetime
+import hashlib
 import io
 import json
 import logging
@@ -19,6 +21,70 @@ from src.exporters.confidence import (
 logger = logging.getLogger(__name__)
 
 WIKIPATHWAYS_SPARQL = "https://sparql.wikipathways.org/sparql"
+
+
+def export_revision_id(revision) -> str:
+    """Short, stable identifier for a full revision fingerprint.
+
+    The fingerprint itself is a table hash concatenated with one
+    size-and-mtime clause per corpus file — precise, but too long and too
+    machine-specific to write on a file a person is meant to read. This folds
+    it to 16 hex characters, which is what the header and the filename carry.
+    """
+    if not revision:
+        return "unknown"
+    return hashlib.sha256(revision.encode("utf-8")).hexdigest()[:16]
+
+
+def gmt_provenance_header(
+    resource,
+    revision=None,
+    min_confidence=None,
+    confidence=None,
+    generated_at=None,
+) -> str:
+    """Comment block identifying which mapping-table state produced a GMT.
+
+    Before the cache learned to invalidate itself, the date-stamped filename
+    was accidentally a content identifier: the file was written once per day
+    and every download that day returned the same bytes, so
+    ``KE-GO_2026-07-22_All.gmt`` named one specific export. Now that the cache
+    correctly follows the mapping table, the same filename can carry different
+    content at different times of the same day — which is right, but it means a
+    downstream analysis that records only the filename can no longer be traced
+    back to the mapping state it consumed. GMT has no header of its own, so the
+    provenance is written as comment lines.
+
+    Every line starts with ``#`` and contains no tab, so a GMT parser splitting
+    on tabs sees a single field and no genes. The molAOP Analyser — the consumer
+    that matters here — drops the lines outright: both parsers in
+    ``services/api_service.py`` (``parse_gmt_reference_sets``,
+    ``parse_gmt_pathway_gene_map``) `continue` on ``len(fields) < 3`` before
+    their ID regexes are ever applied. GSEApy's ``read_gmt`` is more literal — it
+    returns each comment line as a gene set with an empty member list — but they
+    are inert: ``prerank``/``enrich`` size-filter empty sets out, so the analysis
+    result is unchanged. The same holds for the ``readLines``/``strsplit`` R
+    consumers advertised on the downloads page (fgsea, clusterProfiler), which
+    likewise yield empty, ignorable sets rather than choking.
+    """
+    if generated_at is None:
+        generated_at = datetime.datetime.now(datetime.timezone.utc)
+    if confidence:
+        conf = f"exact tier {confidence}"
+    elif min_confidence:
+        conf = f"minimum {min_confidence}"
+    else:
+        conf = "all tiers"
+    lines = [
+        "# molAOP Builder GMT export",
+        f"# resource: {resource}",
+        f"# export-revision: {export_revision_id(revision)}",
+        f"# source-fingerprint: {revision or 'unknown'}",
+        f"# confidence: {conf}",
+        f"# generated: {generated_at.replace(microsecond=0).isoformat()}",
+        "# Lines beginning with # are provenance, not gene sets.",
+    ]
+    return "".join(line.replace("\t", " ") + "\n" for line in lines)
 
 
 

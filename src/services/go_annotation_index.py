@@ -36,7 +36,34 @@ DEFAULT_ANNOTATIONS = "data/go_{ns}_gene_annotations.json"
 DEFAULT_PROPAGATED = "data/go_{ns}_gene_annotations_propagated.json"
 DEFAULT_HIERARCHY = "data/go_{ns}_hierarchy.json"
 
+# {cache key: (source fingerprint, value)}. The fingerprint is what makes the
+# cache safe to hold indefinitely: data/ is a bind mount in every deployment,
+# so the corpus can be refreshed under a running process. A plain
+# populate-once dict served the pre-refresh gene sets for the lifetime of the
+# worker, and the GMT export layer — which fingerprints the same files to
+# decide staleness — would then regenerate, reproduce the old content, and
+# stamp the *new* corpus fingerprint on it, asserting a corpus version the
+# file does not contain and never retrying.
 _cache = {}
+
+
+def _source_fingerprint(paths):
+    """(size, mtime) of each file a cache entry was built from.
+
+    Three stat() calls against a JSON parse of tens of megabytes, so this is
+    still a cache in every sense that matters; it just cannot go on serving a
+    corpus that is no longer on disk.
+    """
+    parts = []
+    for path in paths:
+        if not path:
+            continue
+        try:
+            st = os.stat(path)
+            parts.append(f"{path}:{st.st_size}:{st.st_mtime_ns}")
+        except OSError:
+            parts.append(f"{path}:-")
+    return ";".join(parts)
 
 
 def _read_json(path):
@@ -89,12 +116,20 @@ def get_go_annotations(
     hard failure.
     """
     ns = namespace.lower()
-    if use_cache and ns in _cache:
-        return _cache[ns]
-
     propagated_path = propagated_path or DEFAULT_PROPAGATED.format(ns=ns)
     annotations_path = annotations_path or DEFAULT_ANNOTATIONS.format(ns=ns)
     hierarchy_path = hierarchy_path or DEFAULT_HIERARCHY.format(ns=ns)
+
+    fingerprint = _source_fingerprint(
+        (propagated_path, annotations_path, hierarchy_path)
+    )
+    if use_cache and ns in _cache:
+        cached_fingerprint, cached = _cache[ns]
+        if cached_fingerprint == fingerprint:
+            return cached
+        logger.info(
+            "GO %s annotation corpus changed on disk — reloading", ns.upper()
+        )
 
     result = _read_json(propagated_path)
     if result is not None:
@@ -125,7 +160,7 @@ def get_go_annotations(
                 )
 
     if use_cache:
-        _cache[ns] = result
+        _cache[ns] = (fingerprint, result)
     return result
 
 
@@ -158,16 +193,25 @@ def get_go_direct_counts(namespace="bp", annotations_path=None, use_cache=True):
     """
     ns = namespace.lower()
     key = f"{ns}:direct"
+    path = annotations_path or DEFAULT_ANNOTATIONS.format(ns=ns)
+    fingerprint = _source_fingerprint((path,))
     if use_cache and key in _cache:
-        return _cache[key]
+        cached_fingerprint, cached = _cache[key]
+        if cached_fingerprint == fingerprint:
+            return cached
 
-    raw = _read_json(annotations_path or DEFAULT_ANNOTATIONS.format(ns=ns)) or {}
+    raw = _read_json(path) or {}
     counts = {go_id: len(genes) for go_id, genes in raw.items()}
     if use_cache:
-        _cache[key] = counts
+        _cache[key] = (fingerprint, counts)
     return counts
 
 
 def reset_cache():
-    """Drop the process-wide cache. For tests."""
+    """Drop the process-wide cache.
+
+    Entries invalidate themselves when their source files change (see
+    `_source_fingerprint`), so this is only needed when a test wants a cold
+    load regardless of mtime.
+    """
     _cache.clear()
