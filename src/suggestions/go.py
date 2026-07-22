@@ -648,8 +648,41 @@ class GoSuggestionService:
                     'definition_similarity': round(def_similarity, 3),
                     'relevance_score': round(max_similarity, 3),
                     'quickgo_link': f"https://www.ebi.ac.uk/QuickGO/term/{go_id}",
+                    **self._gene_counts_for(go_id, namespace),
                 })
         return results
+
+    def _gene_counts_for(self, go_id: str, namespace: str) -> Dict:
+        """Gene-set size fields for a GO term, for search and suggestion rows.
+
+        Curators need this at the moment of choosing (#210): a mapping can be
+        semantically perfect and still leave its Key Event untestable, because
+        the Analyser refuses to test a KE resolving to fewer than five genes.
+        KE 1097 -> GO:0097300 is the worked example — the correct term, five
+        genes, three of them measured, and the Key Event silently excluded from
+        every analysis since. Nothing in the UI warned about it.
+
+        Both numbers are reported. `go_gene_count` is the propagated count, the
+        one that governs testability; `go_gene_count_direct` is what is
+        annotated to the term itself. A term with 891 propagated and 7 direct is
+        well-populated but only indirectly evidenced, and hiding either number
+        misleads — showing the direct count alone is what made correct general
+        terms look untestable before #208.
+        """
+        attr = 'go_gene_annotations' if namespace == 'BP' else 'go_mf_gene_annotations'
+        # getattr, not attribute access: this runs inside a search serializer and
+        # must never turn a missing corpus into a failed search. Some tests also
+        # build the service without the annotation dicts.
+        annotations = getattr(self, attr, None) or {}
+        counts = {'go_gene_count': len(annotations.get(go_id, []))}
+        try:
+            from src.services.go_annotation_index import get_go_direct_counts
+            direct = get_go_direct_counts(namespace.lower())
+            counts['go_gene_count_direct'] = direct.get(go_id, 0)
+        except Exception as e:
+            # A missing direct file costs the parenthetical, not the feature.
+            logger.debug("Direct GO %s counts unavailable: %s", namespace, e)
+        return counts
 
     def search_go_terms(
         self, query: str, threshold: float = 0.4, limit: int = 10
@@ -685,6 +718,7 @@ class GoSuggestionService:
                             'definition_similarity': 1.0,
                             'relevance_score': 1.0,
                             'quickgo_link': f"https://www.ebi.ac.uk/QuickGO/term/{normalized}",
+                            **self._gene_counts_for(normalized, ns),
                         }]
                 return []
 

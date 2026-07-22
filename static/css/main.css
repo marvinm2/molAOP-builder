@@ -2658,6 +2658,44 @@ table.dataTable tbody td { padding: 8px 12px; font-size: var(--font-size-sm); bo
     opacity: 0.6;
 }
 
+/* Resolved gene-set size of a candidate term/pathway (#210). Shares the
+   overlap chip's shape so the badge row stays uniform; the --warn variant
+   marks a set below the Analyser's 5-gene testability floor. */
+.gene-set-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--color-text-muted);
+    background: var(--color-bg-lighter, #f8f9fa);
+    border: 1px solid var(--color-border-light);
+    border-radius: 10px;
+    cursor: help;
+    white-space: nowrap;
+}
+.gene-set-chip--warn {
+    color: var(--color-warning-text, #8a6d0b);
+    background: var(--color-warning-bg, #fff8e1);
+    border-color: var(--color-warning-border, #f0d68a);
+    font-weight: 600;
+}
+
+/* Full-width testability caution in the GO assessment form — the last moment
+   before a curator commits a mapping whose gene set is below the Analyser's
+   threshold. Advisory, not blocking. */
+.go-geneset-caution {
+    margin: 0 0 14px 0;
+    padding: 10px 12px;
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--color-warning-text, #8a6d0b);
+    background: var(--color-warning-bg, #fff8e1);
+    border: 1px solid var(--color-warning-border, #f0d68a);
+    border-radius: var(--radius-sm);
+}
+
 /* Confirmation Dialog Overlay */
 .confirmation-dialog {
     position: fixed;

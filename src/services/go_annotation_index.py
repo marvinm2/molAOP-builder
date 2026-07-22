@@ -146,6 +146,28 @@ def get_go_annotations_merged(**kwargs):
     return merged
 
 
+def get_go_direct_counts(namespace="bp", annotations_path=None, use_cache=True):
+    """Return {go_id: direct gene count} straight from the GAF-derived file.
+
+    The propagated count answers "how many genes will this term actually test",
+    which is what the Analyser's threshold acts on. The direct count answers
+    "how much of that is annotated to this term itself" — a term with 891
+    propagated and 7 direct is well-populated but only indirectly evidenced.
+    Curators judging a mapping want both (#210), so both are surfaced rather
+    than one standing in for the other.
+    """
+    ns = namespace.lower()
+    key = f"{ns}:direct"
+    if use_cache and key in _cache:
+        return _cache[key]
+
+    raw = _read_json(annotations_path or DEFAULT_ANNOTATIONS.format(ns=ns)) or {}
+    counts = {go_id: len(genes) for go_id, genes in raw.items()}
+    if use_cache:
+        _cache[key] = counts
+    return counts
+
+
 def reset_cache():
     """Drop the process-wide cache. For tests."""
     _cache.clear()
