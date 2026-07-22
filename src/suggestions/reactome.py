@@ -37,6 +37,7 @@ class ReactomeSuggestionService:
         config=None,
         embedding_service=None,
         ke_override_model=None,
+        ke_metadata_index=None,
         reactome_embeddings_path: str = 'data/reactome_pathway_embeddings.npz',
         reactome_name_embeddings_path: str = 'data/reactome_pathway_name_embeddings.npz',
         reactome_metadata_path: str = 'data/reactome_pathway_metadata.json',
@@ -46,6 +47,11 @@ class ReactomeSuggestionService:
         self.config = config or ConfigLoader.get_default_config()
         self.embedding_service = embedding_service
         self.ke_override_model = ke_override_model
+        # KE metadata keyed by KElabel ("KE 1115"), used to resolve a Key Event
+        # title server-side when the caller supplies none (#209). Accepts a dict
+        # or a zero-argument callable so the container can pass its lazily built
+        # index without forcing it to load at construction time.
+        self._ke_metadata_index = ke_metadata_index
         self.aop_wiki_endpoint = "https://aopwiki.rdf.bigcat-bioinformatics.org/sparql"
 
         # Pre-computed Reactome data — keyed by R-HSA-* stable IDs
@@ -106,6 +112,43 @@ class ReactomeSuggestionService:
         """Extract gene identifier triples ({ncbi, hgnc, symbol}) for a Key Event."""
         return get_genes_from_ke(ke_id, self.aop_wiki_endpoint, self.cache_model)
 
+    def _lookup_ke_title(self, ke_id: str) -> str:
+        """Look up a Key Event's title in the precomputed KE metadata index."""
+        index = self._ke_metadata_index
+        if callable(index):
+            try:
+                index = index()
+            except Exception as e:  # pragma: no cover - defensive
+                logger.warning("KE metadata index unavailable: %s", e)
+                return ''
+        if not index:
+            return ''
+        record = index.get(ke_id) or {}
+        return (record.get('KEtitle') or '').strip()
+
+    def resolve_ke_title(self, ke_id: str, ke_title: str) -> str:
+        """Return a usable Key Event title, falling back to KE metadata.
+
+        `ke_title` is an optional query parameter on /suggest_reactome, so a
+        caller that omits it used to hand the name channel an empty string. The
+        name channel has no precomputed per-KE vector to fall back on, so it
+        encoded "" — one vector shared by every Key Event — and spent its whole
+        weight ranking pathways by how close their names sit to that constant.
+        That is why "Translation" came top for six of AOP 472's seven mapped
+        Key Events (#209). The description channel was never affected because it
+        reads a precomputed vector keyed by ke_id, which is also why
+        /suggest_go_terms — which uses only that channel — stayed discriminative.
+        """
+        title = (ke_title or '').strip()
+        if title:
+            return title
+        resolved = self._lookup_ke_title(ke_id)
+        if resolved:
+            logger.info(
+                "No ke_title supplied for %s; resolved from KE metadata", ke_id
+            )
+        return resolved
+
     # ------------------------------------------------------------------
     # Scoring methods
     # ------------------------------------------------------------------
@@ -132,8 +175,26 @@ class ReactomeSuggestionService:
             )
             def_weight = 1.0 - name_weight
 
-            # Clean KE title (strip directional terms)
-            ke_title_clean = remove_directionality_terms(ke_title)
+            # Clean KE title (strip directional terms). Resolve a missing title
+            # from KE metadata first — see resolve_ke_title.
+            ke_title_resolved = self.resolve_ke_title(ke_id, ke_title)
+            ke_title_clean = remove_directionality_terms(ke_title_resolved)
+
+            # The name channel is only meaningful when there is Key Event text to
+            # encode. With none, encode() returns the same vector for every Key
+            # Event and the channel degenerates into a KE-independent pathway
+            # prior, so drop it and give the description channel the full weight
+            # rather than ranking on a constant.
+            if not ke_title_clean.strip(' ,;:-'):
+                if name_weight > 0.0:
+                    logger.warning(
+                        "No Key Event title available for %s — disabling the "
+                        "Reactome name channel and ranking on the description "
+                        "channel alone.",
+                        ke_id,
+                    )
+                name_weight = 0.0
+                def_weight = 1.0
 
             # Resolve description toggle: global config + per-KE overrides
             global_toggle = (
@@ -165,7 +226,7 @@ class ReactomeSuggestionService:
             # title+description vectors. The WP path (embedding.py, encode of
             # ke_title_processed) has always encoded its title live and so was
             # never affected.
-            if self.reactome_name_embeddings:
+            if self.reactome_name_embeddings and name_weight > 0.0:
                 ke_name_emb = self.embedding_service.get_ke_embedding_for_matching(
                     ke_id, ke_title_clean, use_description=False
                 )
@@ -491,7 +552,7 @@ class ReactomeSuggestionService:
 
             return {
                 "ke_id": ke_id,
-                "ke_title": ke_title,
+                "ke_title": self.resolve_ke_title(ke_id, ke_title),
                 "genes_found": len(genes),
                 "gene_list": [g["symbol"] for g in genes],
                 "gene_list_full": genes,

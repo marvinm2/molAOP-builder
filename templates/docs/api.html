@@ -193,6 +193,10 @@ Analyser will not test a Key Event resolving to fewer than five genes.</p>
 <p>Get Reactome pathway suggestions for a specific Key Event, using the same v1.5
 pure-semantic ranker as WikiPathways and GO.</p>
 <pre><code>curl https://molaop-builder.vhp4safety.nl/suggest_reactome/55</code></pre>
+<p>The optional <code>ke_title</code> parameter overrides the Key Event title used for
+semantic matching. Omit it and the title is resolved server-side from the AOP-Wiki
+Key Event metadata; the title actually scored is echoed back as <code>ke_title</code>
+in the response.</p>
 
 <h4>GET /search_reactome</h4>
 <p>Search Reactome pathways by name or description. A query matching a Reactome stable
