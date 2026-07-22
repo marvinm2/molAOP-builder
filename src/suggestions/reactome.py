@@ -127,8 +127,8 @@ class ReactomeSuggestionService:
                 if reactome_cfg else 0.3
             )
             name_weight = (
-                getattr(reactome_cfg, 'name_weight', 0.85)
-                if reactome_cfg else 0.85
+                getattr(reactome_cfg, 'name_weight', 0.5)
+                if reactome_cfg else 0.5
             )
             def_weight = 1.0 - name_weight
 
@@ -150,14 +150,21 @@ class ReactomeSuggestionService:
                 global_toggle, ke_id in disabled_kes, use_desc,
             )
 
-            # Use split name + definition embeddings if available.
-            # Mirror the WP path (src/services/embedding.py:565-660): pair
-            # the name channel (name-only pathway embedding) with a
-            # title-only KE embedding, and pair the description channel
-            # (name+description joint pathway embedding) with the
-            # toggle-aware full KE embedding. This avoids the asymmetry
-            # of comparing a title-only pathway vector against a
-            # title+description KE vector and vice-versa.
+            # Use split name + definition embeddings if available: pair the
+            # name channel (name-only pathway embedding) with a title-only KE
+            # embedding, and pair the description channel (name+description
+            # joint pathway embedding) with the toggle-aware full KE
+            # embedding. This avoids the asymmetry of comparing a title-only
+            # pathway vector against a title+description KE vector.
+            #
+            # The title-only vector comes from data/ke_embeddings_title_only.npz
+            # when present and is encoded live otherwise — see
+            # get_ke_embedding_for_matching, which must never fall back to the
+            # with-description set here. Until #209 it did, which is how this
+            # channel spent its 85% weight comparing pathway *names* against KE
+            # title+description vectors. The WP path (embedding.py, encode of
+            # ke_title_processed) has always encoded its title live and so was
+            # never affected.
             if self.reactome_name_embeddings:
                 ke_name_emb = self.embedding_service.get_ke_embedding_for_matching(
                     ke_id, ke_title_clean, use_description=False

@@ -632,6 +632,11 @@ class ServiceContainer:
         status = {
             "database": False,
             "oauth": False,
+            # Top-level boolean on purpose: app.py's health route aggregates
+            # with all(health_status.values()), and the nested "services" dict
+            # below is unconditionally truthy — a flag placed inside it could
+            # never flip the reported status (#209).
+            "embeddings_ok": True,
             "services": {
                 "mapping_model": self._mapping_model is not None,
                 "proposal_model": self._proposal_model is not None,
@@ -659,5 +664,15 @@ class ServiceContainer:
             )
         except Exception as e:
             logger.error(f"OAuth health check failed: {e}")
+
+        # Report precomputed-artifact degradation. Read the already-constructed
+        # service only — never touch the lazy property here, or a health check
+        # would load BioBERT.
+        try:
+            degraded = getattr(self._embedding_service, "embeddings_degraded", [])
+            status["embeddings_ok"] = not degraded
+            status["services"]["degraded_embedding_artifacts"] = list(degraded)
+        except Exception as e:
+            logger.error(f"Embedding health check failed: {e}")
 
         return status
