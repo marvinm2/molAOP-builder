@@ -8,7 +8,10 @@ subsets the three embedding-corpus artifacts IN PLACE to that ID set:
   - data/go_bp_metadata.json
 
 Does NOT touch:
-  - data/go_bp_gene_annotations.json  (canonical direct-annotation record; the
+  - data/go_bp_gene_annotations.json  (canonical DIRECT-annotation record. Since
+    #208 the runtime reads the propagated closure written alongside it by
+    precompute_go_hierarchy.py; this file stays direct because IC computation
+    and this script both need the unpropagated counts. The
                                        runtime gene-overlap scorer reads it)
   - data/go_bp_hierarchy.json         (keeps the full term set — ancestor IC
                                        lookups need out-of-range terms present)

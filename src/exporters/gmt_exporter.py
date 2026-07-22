@@ -146,9 +146,18 @@ def generate_ke_wp_gmt(mappings, cache_model=None, min_confidence=None) -> str:
 def _load_go_annotations_merged(bp_path=None, mf_path=None) -> dict:
     """Load and merge BP and MF gene annotation dicts.
 
-    MF annotations are loaded from *mf_path* (derived from *bp_path* if not given).
-    Missing files are silently skipped — callers get whatever is available.
+    BP is ontology-propagated (#208) — a gene annotated to a term counts toward
+    all of its ancestors, per the GO true-path rule. Without that, exported KE
+    gene sets were smaller than the mapping claimed and generic terms such as
+    GO:0008219 "cell death" resolved to 7 genes instead of 891.
+
+    Explicit paths keep the direct-annotation behaviour, since existing fixtures
+    pass toy files with no accompanying hierarchy.
     """
+    if bp_path is None and mf_path is None:
+        from src.services.go_annotation_index import get_go_annotations_merged
+        return get_go_annotations_merged()
+
     data_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'data')
 
     if bp_path is None:

@@ -183,8 +183,24 @@ class GoSuggestionService:
         self._load_json_into(path, self.go_metadata, 'GO BP metadata')
 
     def _load_go_annotations(self, path):
-        """Load GO BP gene annotations"""
-        self._load_json_into(path, self.go_gene_annotations, 'GO BP annotations')
+        """Load GO BP gene annotations, ontology-propagated (#208).
+
+        The on-disk annotations file holds direct GAF annotations only, which
+        violates the GO true-path rule and made generic terms resolve to
+        near-empty gene sets — GO:0008219 "cell death" measured 7 genes against
+        891 once its descendants are counted. The index prefers the precomputed
+        propagated file and degrades to the direct file, so a missing artifact
+        costs accuracy rather than raising.
+
+        A caller-supplied non-default path still loads verbatim, for tests.
+        """
+        if path != 'data/go_bp_gene_annotations.json':
+            self._load_json_into(path, self.go_gene_annotations, 'GO BP annotations')
+            return
+
+        from src.services.go_annotation_index import get_go_annotations
+        self.go_gene_annotations.update(get_go_annotations('bp'))
+        logger.info("Loaded %d GO BP annotations (propagated)", len(self.go_gene_annotations))
 
     def _load_go_hierarchy(self, path):
         """Load GO hierarchy data (depth, IC scores, ancestors) for scoring adjustments.
@@ -814,7 +830,16 @@ class GoSuggestionService:
             ke_gene_set = {g['symbol'] for g in ke_genes}
             results = []
 
-            for go_id, go_genes in ns_data.annotations.items():
+            # Restrict to the suggestion corpus. The annotations dict is a
+            # superset of it — 7628 of the 11207 annotated BP terms are outside
+            # go_bp_metadata.json and would render with go_name "Unknown" — and
+            # propagation (#208) both widens every gene set and adds terms, so
+            # scanning the whole dict got materially more expensive for results
+            # that were never surfaceable.
+            for go_id in ns_data.metadata:
+                go_genes = ns_data.annotations.get(go_id)
+                if not go_genes:
+                    continue
                 go_gene_set = set(go_genes)
                 matching = ke_gene_set.intersection(go_gene_set)
                 if not matching:

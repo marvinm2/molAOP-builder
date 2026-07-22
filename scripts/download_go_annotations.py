@@ -12,7 +12,10 @@ Usage:
     --namespace mf            Molecular Function  — filters GAF aspect 'F'
 
 Output (bp):
-    go_bp_gene_annotations.json - {go_id: [gene_symbols]}
+    go_bp_gene_annotations.json - {go_id: [gene_symbols]}, DIRECT annotations
+        only. Ontology propagation (the GO true-path rule) is applied by
+        scripts/precompute_go_hierarchy.py, which writes
+        go_bp_gene_annotations_propagated.json — that is what the app reads (#208).
 
 Output (mf):
     go_mf_gene_annotations.json - {go_id: [gene_symbols]}

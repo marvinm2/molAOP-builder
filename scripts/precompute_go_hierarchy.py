@@ -377,6 +377,32 @@ def compute_ic_scores(terms, ancestors_cache, annotations_path, remap, root):
     # anywhere in their subtree (count 0).
     propagated_counts = {go_id: len(propagated.get(go_id, set())) for go_id in terms}
 
+    # Persist the propagated gene sets themselves, not just their sizes (#208).
+    #
+    # data/go_{ns}_gene_annotations.json holds DIRECT GAF annotations only, so
+    # every GO-derived KE gene set violated the true-path rule: GO:0006915
+    # "apoptotic process" resolved to 667 genes while its parent GO:0012501
+    # resolved to 35 and its grandparent GO:0008219 "cell death" to 7. A parent
+    # cannot be smaller than its child. Curators picking the most descriptive
+    # faithful term — correct KE->GO practice — were pushed toward
+    # over-specific terms because the right answer produced a useless gene set.
+    #
+    # The closure was already computed here and thrown away. Writing it out is
+    # cheaper and more faithful than rebuilding it at load time, because the
+    # obsolete-term remap applied above cannot be reconstructed without the OBO:
+    # a naive closure over `ancestors` alone lands below propagated_gene_count
+    # on 178 BP terms. The direct file stays canonical and untouched — IC
+    # computation and scripts/subset_go_corpus.py both start from it.
+    propagated_path = annotations_path.replace('.json', '_propagated.json')
+    logger.info(f"Writing propagated gene sets to {propagated_path}...")
+    with open(propagated_path, 'w', encoding='utf-8') as f:
+        json.dump({go_id: sorted(genes) for go_id, genes in propagated.items()}, f)
+    logger.info(
+        "Propagated annotations: %d terms, %d gene-term pairs (%.1f MB)",
+        len(propagated), sum(len(g) for g in propagated.values()),
+        os.path.getsize(propagated_path) / 1024 / 1024,
+    )
+
     # Compute IC
     root_freq = len(propagated.get(root, set()))
     if root_freq == 0:
