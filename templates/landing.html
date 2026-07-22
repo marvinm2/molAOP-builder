@@ -31,22 +31,22 @@
       <div class="landing__stat-grid">
 
         <div class="stat-card stat-card--blue">
-          <div class="stat-card__value" data-target="{{ stats.wp_total }}">0</div>
-          <div class="stat-card__label">KE → WikiPathways</div>
+          <div class="stat-card__value" data-target="{{ stats.wp_total }}">{{ stats.wp_total }}</div>
+          <div class="stat-card__label">KE–WikiPathways mappings</div>
         </div>
 
         <div class="stat-card stat-card--teal">
-          <div class="stat-card__value" data-target="{{ stats.go_total }}">0</div>
-          <div class="stat-card__label">KE → Gene Ontology</div>
+          <div class="stat-card__value" data-target="{{ stats.go_total }}">{{ stats.go_total }}</div>
+          <div class="stat-card__label">KE–Gene Ontology mappings</div>
         </div>
 
         <div class="stat-card stat-card--purple">
-          <div class="stat-card__value" data-target="{{ stats.reactome_total }}">0</div>
-          <div class="stat-card__label">KE → Reactome</div>
+          <div class="stat-card__value" data-target="{{ stats.reactome_total }}">{{ stats.reactome_total }}</div>
+          <div class="stat-card__label">KE–Reactome mappings</div>
         </div>
 
         <div class="stat-card stat-card--dark">
-          <div class="stat-card__value" data-target="{{ stats.total }}">0</div>
+          <div class="stat-card__value" data-target="{{ stats.total }}">{{ stats.total }}</div>
           <div class="stat-card__label">Total Mappings</div>
         </div>
 

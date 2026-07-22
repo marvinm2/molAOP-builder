@@ -1693,7 +1693,69 @@ class Database:
             raise
 
 
-class MappingModel:
+class MappingCountsMixin:
+    """Row counting for the three mapping tables, in one place.
+
+    Subclasses set TABLE and provide self.db.
+
+    Why this exists: the landing-page stat cards and the public API used to
+    count the same rows through two independent pieces of raw SQL — the cards
+    via hand-written queries in src/blueprints/main.py, the API via the
+    paginated model methods. They agreed only by coincidence. The API path
+    already builds a WHERE from its filters while the stats path has no filter
+    concept at all, so any default-on filter added there (status, soft-delete,
+    assessment version) would have desynced the cards silently, which is
+    precisely what #211 was reported as. Both paths now go through _count.
+    """
+
+    TABLE: str = ""
+
+    def _count(self, conn, where: str = "", params=()) -> int:
+        """The single COUNT statement for this table."""
+        return conn.execute(
+            f"SELECT COUNT(*) FROM {self.TABLE} {where}", params
+        ).fetchone()[0]
+
+    def count_all(self) -> int:
+        conn = self.db.get_connection()
+        try:
+            return self._count(conn)
+        finally:
+            conn.close()
+
+    def count_by_confidence(self) -> Dict[str, int]:
+        conn = self.db.get_connection()
+        try:
+            return {
+                row[0]: row[1]
+                for row in conn.execute(
+                    f"SELECT LOWER(confidence_level), COUNT(*) FROM {self.TABLE}"
+                    " GROUP BY LOWER(confidence_level)"
+                ).fetchall()
+            }
+        finally:
+            conn.close()
+
+    def revision(self) -> str:
+        """Cheap fingerprint of the table's current contents.
+
+        Used to decide whether a cached export is stale. Row count alone would
+        miss an in-place edit, and a delete-plus-insert would leave it
+        unchanged, so pair it with the latest updated_at.
+        """
+        conn = self.db.get_connection()
+        try:
+            count, latest = conn.execute(
+                f"SELECT COUNT(*), COALESCE(MAX(updated_at), '') FROM {self.TABLE}"
+            ).fetchone()
+            return f"{count}:{latest}"
+        finally:
+            conn.close()
+
+
+class MappingModel(MappingCountsMixin):
+    TABLE = "mappings"
+
     def __init__(self, db: Database):
         self.db = db
 
@@ -1876,9 +1938,7 @@ class MappingModel:
 
         conn = self.db.get_connection()
         try:
-            total = conn.execute(
-                f"SELECT COUNT(*) FROM mappings {where}", params
-            ).fetchone()[0]
+            total = self._count(conn, where, params)
             rows = conn.execute(
                 f"""SELECT uuid, ke_id, ke_title, wp_id, wp_title, confidence_level,
                            approved_by_curator, approved_at_curator, suggestion_score,
@@ -2754,7 +2814,9 @@ class ProposalModel:
             conn.close()
 
 
-class GoMappingModel:
+class GoMappingModel(MappingCountsMixin):
+    TABLE = "ke_go_mappings"
+
     def __init__(self, db: Database):
         self.db = db
 
@@ -3297,9 +3359,7 @@ class GoMappingModel:
 
         conn = self.db.get_connection()
         try:
-            total = conn.execute(
-                f"SELECT COUNT(*) FROM ke_go_mappings {where}", params
-            ).fetchone()[0]
+            total = self._count(conn, where, params)
             rows = conn.execute(
                 f"""SELECT uuid, ke_id, ke_title, go_id, go_name, go_namespace,
                            confidence_level, go_direction, approved_by_curator, approved_at_curator,
@@ -4006,8 +4066,10 @@ class KeDescriptionOverrideModel:
             conn.close()
 
 
-class ReactomeMappingModel:
+class ReactomeMappingModel(MappingCountsMixin):
     """Model for KE-Reactome pathway mappings"""
+
+    TABLE = "ke_reactome_mappings"
 
     def __init__(self, db: Database):
         self.db = db
@@ -4409,9 +4471,7 @@ class ReactomeMappingModel:
 
         conn = self.db.get_connection()
         try:
-            total = conn.execute(
-                f"SELECT COUNT(*) FROM ke_reactome_mappings {where}", params
-            ).fetchone()[0]
+            total = self._count(conn, where, params)
             rows = conn.execute(
                 f"""SELECT uuid, ke_id, ke_title, reactome_id, pathway_name, species,
                            confidence_level, approved_by_curator, approved_at_curator,

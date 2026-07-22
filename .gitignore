@@ -101,6 +101,7 @@ data/*.gmt
 data/*.gmt.zip
 static/exports/*.gmt
 static/exports/*.ttl
+static/exports/*.rev
 
 # Local SQLite copies / backups
 data/ke_mappings.db
