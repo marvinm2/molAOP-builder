@@ -2998,6 +2998,48 @@ This helps identify gaps in existing pathways for future development.">❓</span
         return `<span class="gene-overlap-chip${emptyClass}" title="${this.escapeHtml(tooltipText)}">Genes: ${fractionLabel}</span>`;
     }
 
+    /**
+     * Gene-set size of the candidate itself — how many genes this term or
+     * pathway resolves to (#210).
+     *
+     * Deliberately labelled "Set:" rather than "Genes:", because
+     * renderGeneOverlapChip already renders "Genes: m/n" on the same badge row
+     * and means something different: how much of the *Key Event's* gene list
+     * this candidate matches. Two numbers, two questions.
+     *
+     * Why it matters: the molAOP Analyser refuses to test a Key Event that
+     * resolves to fewer than five genes, so a mapping can be semantically
+     * perfect and still leave its Key Event silently excluded from every
+     * analysis. That is not hypothetical — KE 1097 was mapped to GO:0097300,
+     * the correct term, which resolves to five genes.
+     *
+     * `direct` is the count annotated to the term itself, shown alongside the
+     * propagated count for GO. A term with 891 propagated and 7 direct is
+     * well-populated but only indirectly evidenced, and the curator should see
+     * both rather than have one stand in for the other.
+     */
+    renderGeneSetSizeChip(count, direct) {
+        // Distinguish "unknown" (no annotation corpus loaded) from "zero".
+        // Showing a warning on every candidate because a data file is missing
+        // would be worse than showing nothing.
+        if (count === null || count === undefined) return '';
+
+        const n = Number(count);
+        if (!Number.isFinite(n)) return '';
+
+        const hasDirect = direct !== null && direct !== undefined
+            && Number.isFinite(Number(direct)) && Number(direct) !== n;
+        const label = hasDirect ? `Set: ${n} genes (${Number(direct)} direct)` : `Set: ${n} genes`;
+
+        const low = n < 5;
+        const tooltip = low
+            ? `Resolves to ${n} gene${n === 1 ? '' : 's'} — below the 5-gene minimum the molAOP Analyser requires to test a Key Event, so this mapping may not be testable.`
+            : `Resolves to ${n} genes.${hasDirect ? ` ${Number(direct)} annotated to this term directly, the rest inherited from its descendants.` : ''}`;
+
+        const cls = low ? ' gene-set-chip--warn' : '';
+        return `<span class="gene-set-chip${cls}" title="${this.escapeHtml(tooltip)}">${this.escapeHtml(label)}</span>`;
+    }
+
     getScoreDetails(scores, suggestion) {
         // Check if this is a combined suggestion or individual method
         if (suggestion.scores) {
@@ -3878,12 +3920,15 @@ This helps identify gaps in existing pathways for future development.">❓</span
                 <div class="search-result-item"
                      data-go-id="${this.escapeHtml(result.go_id)}"
                      data-go-name="${this.escapeHtml(result.go_name)}"
-                     data-go-namespace="${this.escapeHtml(searchNs)}">
+                     data-go-namespace="${this.escapeHtml(searchNs)}"
+                     data-gene-count="${result.go_gene_count != null ? result.go_gene_count : ''}"
+                     data-gene-count-direct="${result.go_gene_count_direct != null ? result.go_gene_count_direct : ''}">
                     <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;">
                         <div style="flex: 1;">
-                            <div class="text-dark-heading" style="display: flex; align-items: center; gap: 6px; font-weight: bold; margin-bottom: 4px;">
+                            <div class="text-dark-heading" style="display: flex; align-items: center; gap: 6px; font-weight: bold; margin-bottom: 4px; flex-wrap: wrap;">
                                 ${searchNsBadge}
                                 ${nameHighlighted}
+                                ${this.renderGeneSetSizeChip(result.go_gene_count, result.go_gene_count_direct)}
                             </div>
                             <div class="text-muted" style="font-size: 11px; margin-bottom: 4px;">
                                 ${result.go_id}
@@ -3911,14 +3956,15 @@ This helps identify gaps in existing pathways for future development.">❓</span
 
         $searchResults.find('.search-result-item').on('click', (e) => {
             const $item = $(e.currentTarget);
-            this.selectGoSearchResult($item.data('go-id'), $item.data('go-name'), $item.data('go-namespace') || 'BP');
+            this.selectGoSearchResult($item.data('go-id'), $item.data('go-name'), $item.data('go-namespace') || 'BP',
+                { count: $item.data('gene-count'), direct: $item.data('gene-count-direct') });
         });
     }
 
-    selectGoSearchResult(goId, goName, goNamespace = 'BP') {
+    selectGoSearchResult(goId, goName, goNamespace = 'BP', geneSet = null) {
         $("#go-term-search").val('');
         $("#go-search-results").hide();
-        this.selectGoTerm(goId, goName, goNamespace);
+        this.selectGoTerm(goId, goName, goNamespace, geneSet);
     }
 
     highlightSearchTerms(text, query) {
@@ -4128,16 +4174,18 @@ This helps identify gaps in existing pathways for future development.">❓</span
             }
 
             const goGeneOverlapChip = this.renderGeneOverlapChip(suggestion, data.genes_found || 0);
+            const goGeneSetChip = this.renderGeneSetSizeChip(
+                suggestion.go_gene_count, suggestion.go_gene_count_direct);
 
             html += `
-                <div class="go-suggestion-item go-suggestion-item--${scoreTier}" data-go-id="${suggestion.go_id}" data-go-name="${this.escapeHtml(suggestion.go_name)}" data-go-namespace="${this.escapeHtml(ns)}">
+                <div class="go-suggestion-item go-suggestion-item--${scoreTier}" data-go-id="${suggestion.go_id}" data-go-name="${this.escapeHtml(suggestion.go_name)}" data-go-namespace="${this.escapeHtml(ns)}" data-gene-count="${suggestion.go_gene_count != null ? suggestion.go_gene_count : ''}" data-gene-count-direct="${suggestion.go_gene_count_direct != null ? suggestion.go_gene_count_direct : ''}">
                     <div style="display: flex; justify-content: space-between; align-items: flex-start;">
                         <div style="flex: 1;">
                             <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px; flex-wrap: wrap;">
                                 ${namespaceBadge}
                                 <strong style="font-size: 14px;" class="text-dark-heading">${this.escapeHtml(suggestion.go_name)}</strong>
                                 ${matchBadges}${depthBadge}${directionBadge}
-                                ${goGeneOverlapChip}
+                                ${goGeneOverlapChip}${goGeneSetChip}
                             </div>
                             <div class="text-muted" style="font-size: 12px; margin-bottom: 6px;">
                                 <a href="${suggestion.quickgo_link}" target="_blank" onclick="event.stopPropagation();">${suggestion.go_id}</a>
@@ -4204,7 +4252,8 @@ This helps identify gaps in existing pathways for future development.">❓</span
         // Bind click handlers using data attributes instead of inline onclick
         $container.find('.go-suggestion-item').off('click').on('click', (e) => {
             const $item = $(e.currentTarget);
-            this.selectGoTerm($item.data('go-id'), $item.data('go-name'), $item.data('go-namespace') || 'BP');
+            this.selectGoTerm($item.data('go-id'), $item.data('go-name'), $item.data('go-namespace') || 'BP',
+                { count: $item.data('gene-count'), direct: $item.data('gene-count-direct') });
         });
     }
 
@@ -4286,7 +4335,7 @@ This helps identify gaps in existing pathways for future development.">❓</span
         return badges.join(' ');
     }
 
-    selectGoTerm(goId, goName, goNamespace = 'BP') {
+    selectGoTerm(goId, goName, goNamespace = 'BP', geneSet = null) {
         this.selectedGoTerm = { goId, goName, goNamespace };
 
         // Highlight selected item
@@ -4300,7 +4349,7 @@ This helps identify gaps in existing pathways for future development.">❓</span
         this.checkForDuplicatePair_go();
 
         // Show GO confidence assessment
-        this.showGoAssessmentForm(goId, goName);
+        this.showGoAssessmentForm(goId, goName, geneSet);
 
         // Scroll to confidence assessment section
         setTimeout(() => {
@@ -4311,7 +4360,7 @@ This helps identify gaps in existing pathways for future development.">❓</span
         }, 100);
     }
 
-    showGoAssessmentForm(goId, goName) {
+    showGoAssessmentForm(goId, goName, geneSet = null) {
         const $section = $('#go-confidence-guide');
         const $form = $('#go-assessment-form');
 
@@ -4328,12 +4377,34 @@ This helps identify gaps in existing pathways for future development.">❓</span
             evidence: 'How strong is the literature evidence linking this GO term to this key event? High: multiple experimental studies. Medium: curated or computational evidence. Low: inferred or assumed.'
         };
 
+        // Testability caution, rendered full-width rather than as a chip (#210).
+        // This form is the last moment before the curator commits, and a mapping
+        // below the Analyser's five-gene floor is one whose Key Event will be
+        // silently dropped from every analysis. Advisory, never blocking — the
+        // semantically correct term is still worth recording when the annotation
+        // data is what is deficient.
+        const geneCount = geneSet && geneSet.count !== '' && geneSet.count != null
+            ? Number(geneSet.count) : null;
+        let geneSetNotice = '';
+        if (geneCount !== null && Number.isFinite(geneCount) && geneCount < 5) {
+            geneSetNotice = `
+                <div class="go-geneset-caution" role="status">
+                    <strong>Resolves to ${geneCount} gene${geneCount === 1 ? '' : 's'}.</strong>
+                    The molAOP Analyser needs at least 5 to test a Key Event, so this
+                    mapping may leave the Key Event untestable. Record it anyway if it
+                    is the most faithful term &mdash; but prefer a term that also
+                    carries a usable gene set where one exists.
+                </div>
+            `;
+        }
+
         let html = `
             <div class="go-assessment go-assessment-wrapper" data-go-id="${goId}">
                 <h4 style="margin: 0 0 15px 0; border-bottom: 1px solid var(--color-border-light); padding-bottom: 8px;" class="text-dark-heading">
                     Assessment for: ${this.escapeHtml(goName)}
                     <span class="text-muted" style="font-size: 13px; font-weight: normal;">(${goId})</span>
                 </h4>
+                ${geneSetNotice}
 
                 <!-- Connection Type dropdown (separate metadata field) -->
                 <div style="margin-bottom: 16px;">
@@ -4825,6 +4896,7 @@ This helps identify gaps in existing pathways for future development.">❓</span
             const borderClass      = this.getBorderClassForMatch([]);     // constant — WP "no badges" treatment
             const finalScoreBar    = this.createFinalScoreBar(s);
             const reactomeGeneChip = this.renderGeneOverlapChip(s, data.genes_found || 0);
+            const reactomeSetChip = this.renderGeneSetSizeChip(s.reactome_pathway_gene_count);
             const hiddenClass      = index >= 3 ? 'suggestion-item-hidden' : '';
 
             const matchingGenesStr = esc((s.matching_genes || []).join(','));
@@ -4845,7 +4917,7 @@ This helps identify gaps in existing pathways for future development.">❓</span
                                 <div>
                                     <strong style="font-size: 14px;">${pathwayName}</strong>
                                     ${matchTypeBadges}
-                                    ${reactomeGeneChip}
+                                    ${reactomeGeneChip}${reactomeSetChip}
                                 </div>
                                 ${finalScoreBar}
                             </div>
@@ -5157,7 +5229,10 @@ This helps identify gaps in existing pathways for future development.">❓</span
                      data-pathway-name="${pathwayName}"
                      data-species="${species}"
                      data-relevance="${relevance != null ? relevance : ''}">
-                    <div><strong>${pathwayName}</strong></div>
+                    <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+                        <strong>${pathwayName}</strong>
+                        ${this.renderGeneSetSizeChip(r.reactome_pathway_gene_count)}
+                    </div>
                     <div class="text-muted" style="font-size: 12px;">
                         <span style="font-family: monospace;">${reactomeId}</span> &middot; ${species}${relText ? ` &middot; score ${relText}` : ''}
                     </div>

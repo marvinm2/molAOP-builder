@@ -508,6 +508,20 @@ class ReactomeSuggestionService:
                 "ke_title": ke_title,
             }
 
+    def _gene_count_for(self, reactome_id: str) -> int:
+        """Resolved gene-set size for a pathway, for search rows (#210).
+
+        /suggest_reactome already emits this under the same key; search did not,
+        so a curator arriving via keyword search — which is how the correct
+        pathways had to be found while #209 was open — saw no size at all.
+
+        Note this can never fall below the Analyser's five-gene testability
+        floor: scripts/download_reactome_annotations.py filters the corpus at
+        MIN_GENES = 10. It is informational here, unlike the GO equivalent.
+        """
+        annotations = getattr(self, "reactome_gene_annotations", None) or {}
+        return len(annotations.get(reactome_id, []))
+
     def search_reactome_terms(
         self, query: str, threshold: float = 0.4, limit: int = 10
     ) -> List[Dict]:
@@ -548,6 +562,7 @@ class ReactomeSuggestionService:
                         "description": meta.get("description", ""),
                         "name_similarity": 1.0,
                         "relevance_score": 1.0,
+                        "reactome_pathway_gene_count": self._gene_count_for(normalized),
                     }]
                 return []
 
@@ -577,6 +592,7 @@ class ReactomeSuggestionService:
                         "description": meta.get("description", ""),
                         "name_similarity": round(name_sim, 4),
                         "relevance_score": round(relevance, 4),
+                        "reactome_pathway_gene_count": self._gene_count_for(rid),
                     })
 
             results.sort(key=lambda x: x["relevance_score"], reverse=True)

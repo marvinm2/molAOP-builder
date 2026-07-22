@@ -175,6 +175,12 @@ curl "https://molaop-builder.vhp4safety.nl/search_go_terms?q=GO:0006915"</code><
 <p>A query matching a GO ID (<code>GO:0006915</code>, <code>go:0006915</code>,
 <code>GO_0006915</code>) resolves directly to that term at relevance 1.0.</p>
 
+<p>Every result carries <code>go_gene_count</code> — the number of genes the term
+resolves to, propagated over the GO <code>is_a</code>/<code>part_of</code> closure —
+and <code>go_gene_count_direct</code>, the subset annotated to the term itself.
+The propagated figure is the one that governs testability downstream: the molAOP
+Analyser will not test a Key Event resolving to fewer than five genes.</p>
+
 <h4>GET /suggest_reactome/&lt;ke_id&gt;</h4>
 <p>Get Reactome pathway suggestions for a specific Key Event, using the same v1.5
 pure-semantic ranker as WikiPathways and GO.</p>
@@ -186,6 +192,11 @@ identifier (<code>R-HSA-109581</code>, tolerating separators) resolves directly 
 pathway.</p>
 <pre><code>curl "https://molaop-builder.vhp4safety.nl/search_reactome?q=apoptosis&limit=10"
 curl "https://molaop-builder.vhp4safety.nl/search_reactome?q=R-HSA-109581"</code></pre>
+
+<p>Every result carries <code>reactome_pathway_gene_count</code>, matching the field
+already returned by <code>/suggest_reactome</code>. The Reactome corpus is filtered to
+pathways of at least 10 genes, so this is informational rather than a testability
+warning.</p>
 
 <p><strong>Parameters:</strong> <code>q</code> (required), <code>limit</code> (default: 10),
 <code>threshold</code> (default: 0.4).</p>
