@@ -1,4 +1,4 @@
-.PHONY: help install test lint run docker-build docker-run clean capture-versions backfill-versions go-hierarchy go-corpus wp-corpus
+.PHONY: help install test lint run docker-build docker-run clean capture-versions backfill-versions go-hierarchy go-corpus wp-corpus wp-annotations
 
 help:		## Show this help
 	@echo "Available targets:"
@@ -48,6 +48,9 @@ wp-corpus:	## Rebuild + size-filter the WikiPathways suggestion corpus (annotati
 	python scripts/download_wikipathways_annotations.py
 	python scripts/precompute_pathway_title_embeddings.py
 	python scripts/precompute_pathway_embeddings.py
+
+wp-annotations:	## Refresh only data/wikipathways_gene_annotations.json (gene-set sizes shown in search/suggestions)
+	python scripts/download_wikipathways_annotations.py
 
 oecd-status:	## Regenerate data/aop_oecd_status.json from AOP-Wiki RDF SPARQL (run quarterly)
 	python scripts/precompute_oecd_status.py

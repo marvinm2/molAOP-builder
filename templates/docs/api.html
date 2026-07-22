@@ -132,7 +132,8 @@ curl "https://molaop-builder.vhp4safety.nl/api/v1/reactome-mappings?format=csv" 
 <p>Get AI-powered pathway suggestions for a specific Key Event.</p>
 <pre><code>curl https://molaop-builder.vhp4safety.nl/suggest_pathways/55</code></pre>
 
-<p><strong>Response:</strong> JSON object with ranked suggestions</p>
+<p><strong>Response:</strong> JSON object with ranked suggestions, each carrying
+<code>pathway_total_genes</code> &mdash; see below.</p>
 
 <h4>GET /search_pathways</h4>
 <p>Search for pathways by title or description with fuzzy matching. A query that is a
@@ -146,6 +147,13 @@ curl "https://molaop-builder.vhp4safety.nl/search_pathways?q=WP554"</code></pre>
     <li><code>limit</code> - Max results (default: 20, max: 100)</li>
     <li><code>threshold</code> - Similarity threshold 0.1&ndash;1.0 (default: 0.4)</li>
 </ul>
+
+<p>Every result carries <code>pathway_total_genes</code>, the number of HGNC symbols the
+pathway resolves to, read from a snapshot of the WikiPathways SPARQL endpoint taken with
+the same <code>wp:bdbHgncSymbol</code> predicate the GMT exports use. The field is
+<code>null</code>, never <code>0</code>, when the size is unknown: the snapshot is
+deliberately restricted to pathways of 10&ndash;500 genes, so a pathway outside that band
+has an unknown rather than an empty gene set.</p>
 
 <div class="info-box">
     <strong>Identifier lookup:</strong> a query matching a WikiPathways ID
