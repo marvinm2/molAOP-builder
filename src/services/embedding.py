@@ -99,6 +99,10 @@ class BiologicalEmbeddingService:
             self.model_name = model_name
             self.device = device
 
+            # Precomputed artifacts found missing at load or lookup time.
+            # Reported by /health so a degraded deployment is visible (#209).
+            self.embeddings_degraded: List[str] = []
+
             # Score transformation configuration
             self.score_transform_config = score_transform_config or DEFAULT_SCORE_TRANSFORM
             logger.info(f"Score transformation: {self.score_transform_config['method']} "
@@ -216,9 +220,11 @@ class BiologicalEmbeddingService:
             except Exception as e:
                 logger.warning("Could not load title-only KE embeddings: %s", e)
                 self.ke_embeddings_title_only = {}
+                self._note_degraded_embeddings('ke_embeddings_title_only')
         else:
             logger.warning("Title-only KE embeddings not found: %s", title_only_path)
             self.ke_embeddings_title_only = {}
+            self._note_degraded_embeddings('ke_embeddings_title_only')
 
         # Load with-description embeddings
         if os.path.exists(with_desc_path):
@@ -252,11 +258,39 @@ class BiologicalEmbeddingService:
         if use_description:
             if ke_id in self.ke_embeddings_with_desc:
                 return self.ke_embeddings_with_desc[ke_id]
-        else:
-            if ke_id in self.ke_embeddings_title_only:
-                return self.ke_embeddings_title_only[ke_id]
-        # Fallback to original ke_embeddings (backward compat) or encode
-        return self.get_ke_embedding(ke_id, ke_text)
+            # Fallback to original ke_embeddings (backward compat) or encode.
+            # Safe: ke_embeddings is itself a title+description set.
+            return self.get_ke_embedding(ke_id, ke_text)
+
+        if ke_id in self.ke_embeddings_title_only:
+            return self.ke_embeddings_title_only[ke_id]
+
+        # A title-only request must NEVER fall through to get_ke_embedding():
+        # self.ke_embeddings holds title+description vectors, so doing so would
+        # silently return the very thing the caller asked to exclude. That is
+        # what broke Reactome name-channel ranking (#209) — the title-only NPZ
+        # was never generated, so every caller got a with-description vector
+        # while believing it had a title-only one. Encode the text instead;
+        # encode() is lru_cached, and this is what the WP path already does.
+        self._note_degraded_embeddings('ke_embeddings_title_only')
+        return self.encode(ke_text)
+
+    def _note_degraded_embeddings(self, artifact: str) -> None:
+        """Record a missing precomputed artifact, logging once per artifact.
+
+        Surfaced by ServiceContainer.get_health_status() so a deployment
+        running on live-encoded fallbacks is visible rather than silent.
+        """
+        if artifact in self.embeddings_degraded:
+            return
+        self.embeddings_degraded.append(artifact)
+        logger.warning(
+            "Precomputed artifact '%s' unavailable — falling back to live "
+            "encoding. Suggestion quality is unaffected but each uncached "
+            "Key Event costs one forward pass; regenerate via "
+            "scripts/precompute_ke_embeddings.py to restore.",
+            artifact,
+        )
 
     def _extract_entities(self, text: str) -> str:
         """

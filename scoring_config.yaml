@@ -636,9 +636,23 @@ reactome_suggestion:
   gene_min_term_size: 10         # Pathways below this gene count get dampened scores
 
   # Name/Description embedding blend
-  # Aligned with the WP path (pathway_suggestion.embedding_based_matching.title_weight)
-  # so name dominates and the joint name+description channel acts as a refinement.
-  name_weight: 0.85        # Weight for name similarity (description weight = 1 - name_weight)
+  # ----------------------------------------------------------------------------
+  # REVISED (#209): was 0.85, copied from the WP path
+  # (pathway_suggestion.embedding_based_matching.title_weight) on the assumption
+  # that name should dominate. That assumption does not transfer to Reactome.
+  # Reactome pathway names are terse (median 4 words) while the biology lives in
+  # the summations (median 149 words) — the opposite balance from GO, which uses
+  # 0.60. Measured on the KE-149 / R-HSA-622312 (Inflammasomes) case from #209,
+  # rank out of 1498: name channel alone 196, description channel alone 50,
+  # 0.85/0.15 blend 155, 0.50/0.50 blend 74. The 0.50 split is neutral on
+  # KE 1115 / R-HSA-3299685 (stays rank 1 after the title-only fix) and on
+  # KE 1097 (241 vs 244).
+  #
+  # Note this is calibrated on three Key Events, not a held-out set. A proper
+  # re-calibration against the approved ke_reactome_mappings rows is tracked
+  # with the hubness work; treat 0.50 as better-evidenced than 0.85, not final.
+  # ----------------------------------------------------------------------------
+  name_weight: 0.50        # Weight for name similarity (description weight = 1 - name_weight)
 
   max_results: 10          # v1.5: capped at 10 (down from 20) to enforce curated top-N
   use_ke_description: true  # Include KE description in embedding computation
