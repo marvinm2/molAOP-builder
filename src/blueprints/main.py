@@ -684,9 +684,40 @@ def ke_biolevels():
     return jsonify(result)
 
 
+def _load_go_annotations_for_api():
+    """Merged BP+MF GO annotations, or {} if the corpus is unavailable.
+
+    Ontology-propagated BP annotations (#208) — the raw file holds direct GAF
+    annotations only, so generic terms resolved to near-empty gene sets. Merged
+    with MF, which these two endpoints never loaded at all (#219).
+    """
+    try:
+        from src.services.go_annotation_index import get_go_annotations_merged
+        return get_go_annotations_merged()
+    except Exception as e:
+        # Absence just means GO gene rows in the response stay empty.
+        logger.debug("GO annotations load failed: %s", e)
+        return {}
+
+
+def _load_reactome_annotations_for_api():
+    """{reactome_id: [symbols]} from the same loader the GMT export uses (#226).
+
+    Deliberately the exporter's own helper rather than a second reader: the two
+    surfaces must not be able to disagree about what a mapping contributes.
+    """
+    try:
+        from src.exporters.gmt_exporter import _load_reactome_annotations
+        return _load_reactome_annotations()
+    except Exception as e:
+        # Absence just means Reactome gene rows in the response stay empty.
+        logger.debug("Reactome annotations load failed: %s", e)
+        return {}
+
+
 @main_bp.route("/api/ke-gene-counts")
 def ke_gene_counts():
-    """Return a map of KE ID to de-duplicated gene count from WP+GO mappings."""
+    """Return a map of KE ID to de-duplicated gene count from WP+GO+Reactome mappings."""
     from src.exporters.gmt_exporter import _fetch_pathway_genes_batch
 
     mapping_type = request.args.get("type", "all").lower()
@@ -706,20 +737,23 @@ def ke_gene_counts():
     # GO gene data
     if mapping_type in ("go", "all"):
         go_mappings = list(go_mapping_model.get_all_mappings() if go_mapping_model else [])
-        # Ontology-propagated BP annotations (#208) — the raw file holds direct
-        # GAF annotations only, so generic terms resolved to near-empty gene
-        # sets. Merged with MF, which these two endpoints never loaded at all.
-        go_annotations = {}
-        try:
-            from src.services.go_annotation_index import get_go_annotations_merged
-            go_annotations = get_go_annotations_merged()
-        except Exception as e:
-            # Absence just means GO gene rows in the response stay empty.
-            logger.debug("GO annotations load failed: %s", e)
+        go_annotations = _load_go_annotations_for_api()
 
         for m in go_mappings:
             ke_id = m['ke_id']
             genes = go_annotations.get(m['go_id'], [])
+            result.setdefault(ke_id, set()).update(genes)
+
+    # Reactome gene data (#226)
+    if mapping_type in ("reactome", "all"):
+        reactome_mappings = list(
+            reactome_mapping_model.get_all_mappings() if reactome_mapping_model else []
+        )
+        reactome_annotations = _load_reactome_annotations_for_api()
+
+        for m in reactome_mappings:
+            ke_id = m['ke_id']
+            genes = reactome_annotations.get(m['reactome_id'], [])
             result.setdefault(ke_id, set()).update(genes)
 
     return jsonify({ke_id: len(genes) for ke_id, genes in result.items() if len(genes) > 0})
@@ -727,7 +761,7 @@ def ke_gene_counts():
 
 @main_bp.route("/api/ke-genes/<ke_id>")
 def ke_genes_for_ke(ke_id):
-    """Return genes for a single KE grouped by WP/GO source term."""
+    """Return genes for a single KE grouped by WP/GO/Reactome source term."""
     from src.exporters.gmt_exporter import _fetch_pathway_genes_batch
 
     mapping_type = request.args.get("type", "all").lower()
@@ -757,16 +791,7 @@ def ke_genes_for_ke(ke_id):
     if mapping_type in ("go", "all"):
         go_mappings = [m for m in (go_mapping_model.get_all_mappings() if go_mapping_model else [])
                        if m.get('ke_id') == ke_id]
-        # Ontology-propagated BP annotations (#208) — the raw file holds direct
-        # GAF annotations only, so generic terms resolved to near-empty gene
-        # sets. Merged with MF, which these two endpoints never loaded at all.
-        go_annotations = {}
-        try:
-            from src.services.go_annotation_index import get_go_annotations_merged
-            go_annotations = get_go_annotations_merged()
-        except Exception as e:
-            # Absence just means GO gene rows in the response stay empty.
-            logger.debug("GO annotations load failed: %s", e)
+        go_annotations = _load_go_annotations_for_api()
 
         for m in go_mappings:
             genes = sorted(go_annotations.get(m['go_id'], []))
@@ -776,6 +801,26 @@ def ke_genes_for_ke(ke_id):
                     "type": "go",
                     "id": m['go_id'],
                     "name": m.get('go_name', m['go_id']),
+                    "confidence_level": m.get('confidence_level', 'low'),
+                    "genes": genes
+                })
+
+    # Reactome gene data (#226)
+    if mapping_type in ("reactome", "all"):
+        reactome_mappings = [
+            m for m in (reactome_mapping_model.get_all_mappings() if reactome_mapping_model else [])
+            if m.get('ke_id') == ke_id
+        ]
+        reactome_annotations = _load_reactome_annotations_for_api()
+
+        for m in reactome_mappings:
+            genes = sorted(reactome_annotations.get(m['reactome_id'], []))
+            all_genes.update(genes)
+            if genes:
+                groups.append({
+                    "type": "reactome",
+                    "id": m['reactome_id'],
+                    "name": m.get('pathway_name', m['reactome_id']),
                     "confidence_level": m.get('confidence_level', 'low'),
                     "genes": genes
                 })
