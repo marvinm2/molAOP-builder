@@ -32,7 +32,7 @@ pip-licenses==4.3.2
 pre-commit==3.4.0
 
 # Database Tools (compatible with our SQLite setup)
-sqlite-utils==3.35.2
+sqlite-utils==3.39
 
 # API Testing (compatible with our requests version)
 requests-mock==1.11.0
