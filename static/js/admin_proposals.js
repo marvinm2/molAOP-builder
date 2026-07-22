@@ -44,6 +44,27 @@ var AdminProposals = (function () {
         step4: { complete: 'Complete mechanism', keysteps: 'Key steps only', minor: 'Minor aspects' }
     };
 
+    // Issue #213: GO proposals carry a different assessment schema. The WP and
+    // Reactome queues store four categorical answers (proposed_relationship /
+    // _basis / _specificity / _coverage on `proposals`), while the GO mapper
+    // asks three High/Medium/Low questions stored as 3/2/1 integers
+    // (proposed_connection_score / _specificity_score / _evidence_score on
+    // `ke_go_proposals`). The panel used to test only the WP columns, so every
+    // GO proposal — including freshly submitted ones — rendered as
+    // "No assessment submitted (legacy proposal)" even though the answers were
+    // stored correctly. Question wording matches the submitter's form in
+    // static/js/main.js:4420-4460 so reviewer and submitter see the same labels.
+    var goDimensionLabels = { 3: 'High', 2: 'Medium', 1: 'Low' };
+    var goDimensions = [
+        { key: 'proposed_connection_score', label: 'Connection (biological relevance)' },
+        { key: 'proposed_specificity_score', label: 'Specificity (term precision)' },
+        { key: 'proposed_evidence_score', label: 'Evidence (literature support)' }
+    ];
+
+    function _hasValue(v) {
+        return v !== null && v !== undefined && v !== '';
+    }
+
     // -------------------------------------------------------------------------
     // DataTable init
     // -------------------------------------------------------------------------
@@ -211,6 +232,12 @@ var AdminProposals = (function () {
             proposed_basis: $row.data('proposed-basis') || null,
             proposed_specificity: $row.data('proposed-specificity') || null,
             proposed_coverage: $row.data('proposed-coverage') || null,
+            // Issue #213: GO's three-dimension assessment. Absent on the WP and
+            // Reactome queues, where these stay null and the four-answer block
+            // above is rendered instead.
+            proposed_connection_score: $row.data('proposed-connection-score') || null,
+            proposed_specificity_score: $row.data('proposed-specificity-score') || null,
+            proposed_evidence_score: $row.data('proposed-evidence-score') || null,
             suggestion_score: $row.data('suggestion-score') || null,
             user_name: $row.data('user-name') || '',
             submitted_by: $row.data('submitted-by') || '',
@@ -290,12 +317,22 @@ var AdminProposals = (function () {
         // Assessment block (verbatim from admin_proposals.html:280-296)
         var assessmentHtml = (function () {
             var p = proposal;
-            var hasAssessment = p.proposed_relationship != null && p.proposed_relationship !== ''
-                || p.proposed_basis != null && p.proposed_basis !== ''
-                || p.proposed_specificity != null && p.proposed_specificity !== ''
-                || p.proposed_coverage != null && p.proposed_coverage !== '';
+            var hasAssessment = _hasValue(p.proposed_relationship)
+                || _hasValue(p.proposed_basis)
+                || _hasValue(p.proposed_specificity)
+                || _hasValue(p.proposed_coverage);
+            // Issue #213: GO's three-dimension schema (see goDimensions above).
+            var hasGoAssessment = goDimensions.some(function (d) {
+                return _hasValue(p[d.key]);
+            });
             var body;
-            if (hasAssessment) {
+            if (hasGoAssessment) {
+                body = goDimensions.map(function (d) {
+                    var raw = p[d.key];
+                    var label = _hasValue(raw) ? (goDimensionLabels[raw] || raw) : '—';
+                    return '<div><strong>' + escapeHtml(d.label) + ':</strong> ' + escapeHtml(label) + '</div>';
+                }).join('');
+            } else if (hasAssessment) {
                 body = '<div><strong>Relationship:</strong> ' + escapeHtml(stepLabels.step1[p.proposed_relationship] || p.proposed_relationship || '—') + '</div>' +
                        '<div><strong>Basis:</strong> ' + escapeHtml(stepLabels.step2[p.proposed_basis] || p.proposed_basis || '—') + '</div>' +
                        '<div><strong>Specificity:</strong> ' + escapeHtml(stepLabels.step3[p.proposed_specificity] || p.proposed_specificity || '—') + '</div>' +
