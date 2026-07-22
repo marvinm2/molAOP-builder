@@ -14,6 +14,7 @@ import json
 import zipfile
 
 
+from src.exporters.gmt_exporter import _apply_confidence
 from src.exporters.zenodo_assembly import (
     assemble_deposit_files,
     build_metadata,
@@ -126,12 +127,18 @@ def test_snapshot_table_fallback_when_no_sources():
 
 # ---------- build_resource_zip() ----------
 
-def _fake_gmt(rows, min_confidence=None, **kwargs):
-    """Return one TSV line per row whose confidence matches the filter,
-    or all rows if no filter. Empty string when no row qualifies — that
-    triggers the omit-empty-tier branch in build_resource_zip."""
-    if min_confidence:
-        rows = [r for r in rows if r.get("confidence_level", "").lower() == min_confidence]
+def _fake_gmt(rows, min_confidence=None, confidence=None, **kwargs):
+    """Return one TSV line per surviving row, or "" when none qualify — that
+    empty string triggers the omit-empty-tier branch in build_resource_zip.
+
+    Delegates to the production filters rather than reimplementing them. This
+    stub previously carried its own exact-match copy of the filter *and*
+    absorbed unknown kwargs into **kwargs, so when build_resource_zip switched
+    from min_confidence= to confidence= (#206) it silently stopped filtering
+    at all while the tests kept passing. A stub that defines the behaviour
+    under test has to track the real thing.
+    """
+    rows = _apply_confidence(rows, min_confidence, confidence)
     if not rows:
         return ""
     return "\n".join(f"{r['ke_id']}\tdesc\t{r.get('wp_id') or r.get('go_id') or r.get('reactome_id')}" for r in rows) + "\n"

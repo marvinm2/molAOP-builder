@@ -11,10 +11,36 @@ import re
 import unicodedata
 from collections import defaultdict
 
+from src.exporters.confidence import (
+    filter_by_exact_confidence,
+    filter_by_min_confidence,
+)
+
 logger = logging.getLogger(__name__)
 
 WIKIPATHWAYS_SPARQL = "https://sparql.wikipathways.org/sparql"
 
+
+
+def _apply_confidence(mappings, min_confidence=None, confidence=None):
+    """Apply whichever confidence filter the caller asked for.
+
+    `min_confidence` is a threshold (medium => medium and above) and backs the
+    public ?min_confidence= query parameter. `confidence` selects a single tier
+    and backs the mutually exclusive _High/_Medium/_Low files in the Zenodo
+    deposit and the admin export bundle. Passing both is a caller bug.
+
+    Before #206 there was only `min_confidence`, and it implemented the
+    partition — so ?min_confidence=medium silently dropped every high-confidence
+    mapping.
+    """
+    if min_confidence and confidence:
+        raise ValueError(
+            "Pass either min_confidence (threshold) or confidence (exact tier), not both"
+        )
+    if confidence:
+        return filter_by_exact_confidence(mappings, confidence)
+    return filter_by_min_confidence(mappings, min_confidence)
 
 def _make_ke_slug(ke_id: str, ke_title: str) -> str:
     """Return KE{N}_{Title_Slug} without a target suffix.
@@ -90,7 +116,7 @@ SELECT DISTINCT ?pathwayID ?geneSymbol WHERE {{
         return {}
 
 
-def generate_ke_wp_gmt(mappings, cache_model=None, min_confidence=None) -> str:
+def generate_ke_wp_gmt(mappings, cache_model=None, min_confidence=None, confidence=None) -> str:
     """Generate GMT content for KE-WP mappings.
 
     Parameters
@@ -102,8 +128,15 @@ def generate_ke_wp_gmt(mappings, cache_model=None, min_confidence=None) -> str:
         Optional CacheModel instance for SPARQL result caching. Pass None to
         skip caching.
     min_confidence:
-        Optional lowercase string (e.g. "high"). Rows whose confidence_level
-        does not match are excluded.
+        Optional lowercase threshold ("high", "medium" or "low"). Rows below
+        it are excluded; "medium" therefore keeps medium *and* high, and "low"
+        is equivalent to no filtering. Rows whose own confidence is missing or
+        unrecognised are kept, so an export can never silently empty.
+        Mutually exclusive with `confidence`.
+    confidence:
+        Optional lowercase exact tier. Keeps only rows at precisely this level —
+        the partition the Zenodo deposit's _High/_Medium/_Low files are built
+        on. Mutually exclusive with `min_confidence`.
 
     Returns
     -------
@@ -111,12 +144,7 @@ def generate_ke_wp_gmt(mappings, cache_model=None, min_confidence=None) -> str:
         GMT-formatted string (tab-separated, one row per KE-pathway pair).
         Empty string if no rows survive filtering or no genes are found.
     """
-    # Apply confidence filter
-    if min_confidence:
-        mappings = [
-            r for r in mappings
-            if r.get("confidence_level", "").lower() == min_confidence
-        ]
+    mappings = _apply_confidence(mappings, min_confidence, confidence)
 
     if not mappings:
         return ""
@@ -167,7 +195,7 @@ def _load_go_annotations_merged(bp_path=None, mf_path=None) -> dict:
     return merged
 
 
-def generate_ke_go_gmt(mappings, go_annotations_path=None, min_confidence=None) -> str:
+def generate_ke_go_gmt(mappings, go_annotations_path=None, min_confidence=None, confidence=None) -> str:
     """Generate GMT content for KE-GO mappings.
 
     Parameters
@@ -191,12 +219,7 @@ def generate_ke_go_gmt(mappings, go_annotations_path=None, min_confidence=None) 
     # Load both BP and MF annotations; MF terms need genes from MF file
     go_annotations = _load_go_annotations_merged(bp_path=go_annotations_path)
 
-    # Apply confidence filter
-    if min_confidence:
-        mappings = [
-            r for r in mappings
-            if r.get("confidence_level", "").lower() == min_confidence
-        ]
+    mappings = _apply_confidence(mappings, min_confidence, confidence)
 
     if not mappings:
         return ""
@@ -222,7 +245,7 @@ def generate_ke_go_gmt(mappings, go_annotations_path=None, min_confidence=None) 
     return buf.getvalue()
 
 
-def generate_ke_centric_wp_gmt(mappings, cache_model=None, min_confidence=None) -> str:
+def generate_ke_centric_wp_gmt(mappings, cache_model=None, min_confidence=None, confidence=None) -> str:
     """Generate KE-centric GMT content for KE-WP mappings.
 
     Each row represents one Key Event. Gene symbols are unioned across all
@@ -238,8 +261,15 @@ def generate_ke_centric_wp_gmt(mappings, cache_model=None, min_confidence=None) 
     cache_model:
         Optional CacheModel instance for SPARQL result caching.
     min_confidence:
-        Optional lowercase string (e.g. "high"). Rows whose confidence_level
-        does not match are excluded.
+        Optional lowercase threshold ("high", "medium" or "low"). Rows below
+        it are excluded; "medium" therefore keeps medium *and* high, and "low"
+        is equivalent to no filtering. Rows whose own confidence is missing or
+        unrecognised are kept, so an export can never silently empty.
+        Mutually exclusive with `confidence`.
+    confidence:
+        Optional lowercase exact tier. Keeps only rows at precisely this level —
+        the partition the Zenodo deposit's _High/_Medium/_Low files are built
+        on. Mutually exclusive with `min_confidence`.
 
     Returns
     -------
@@ -247,8 +277,7 @@ def generate_ke_centric_wp_gmt(mappings, cache_model=None, min_confidence=None) 
         GMT-formatted string (tab-separated, one row per KE).
         Empty string if no rows survive filtering or no genes are found.
     """
-    if min_confidence:
-        mappings = [r for r in mappings if r.get("confidence_level", "").lower() == min_confidence]
+    mappings = _apply_confidence(mappings, min_confidence, confidence)
 
     if not mappings:
         return ""
@@ -282,7 +311,7 @@ def generate_ke_centric_wp_gmt(mappings, cache_model=None, min_confidence=None) 
     return buf.getvalue()
 
 
-def generate_ke_centric_go_gmt(mappings, go_annotations_path=None, min_confidence=None) -> str:
+def generate_ke_centric_go_gmt(mappings, go_annotations_path=None, min_confidence=None, confidence=None) -> str:
     """Generate KE-centric GMT content for KE-GO mappings.
 
     Each row represents one Key Event. Gene symbols are unioned across all
@@ -311,8 +340,7 @@ def generate_ke_centric_go_gmt(mappings, go_annotations_path=None, min_confidenc
     # Load both BP and MF annotations
     go_annotations = _load_go_annotations_merged(bp_path=go_annotations_path)
 
-    if min_confidence:
-        mappings = [r for r in mappings if r.get("confidence_level", "").lower() == min_confidence]
+    mappings = _apply_confidence(mappings, min_confidence, confidence)
 
     if not mappings:
         return ""
@@ -361,7 +389,7 @@ def _load_reactome_annotations(path=None) -> dict:
         return {}
 
 
-def generate_ke_reactome_gmt(mappings, gene_annotations_path=None, min_confidence=None) -> str:
+def generate_ke_reactome_gmt(mappings, gene_annotations_path=None, min_confidence=None, confidence=None) -> str:
     """Generate per-mapping GMT content for KE-Reactome mappings.
 
     Each row: ``KE{N}_{Slug}_R-HSA-NNNN \\t pathway_name \\t gene1 \\t gene2 ...``
@@ -389,12 +417,7 @@ def generate_ke_reactome_gmt(mappings, gene_annotations_path=None, min_confidenc
     """
     reactome_annotations = _load_reactome_annotations(path=gene_annotations_path)
 
-    # Apply confidence filter
-    if min_confidence:
-        mappings = [
-            r for r in mappings
-            if r.get("confidence_level", "").lower() == min_confidence
-        ]
+    mappings = _apply_confidence(mappings, min_confidence, confidence)
 
     if not mappings:
         return ""
@@ -418,7 +441,7 @@ def generate_ke_reactome_gmt(mappings, gene_annotations_path=None, min_confidenc
     return buf.getvalue()
 
 
-def generate_ke_centric_reactome_gmt(mappings, gene_annotations_path=None, min_confidence=None) -> str:
+def generate_ke_centric_reactome_gmt(mappings, gene_annotations_path=None, min_confidence=None, confidence=None) -> str:
     """Generate KE-centric GMT content for KE-Reactome mappings.
 
     One row per Key Event. Gene symbols are unioned (order-preserving dedup)
@@ -444,11 +467,7 @@ def generate_ke_centric_reactome_gmt(mappings, gene_annotations_path=None, min_c
     """
     reactome_annotations = _load_reactome_annotations(path=gene_annotations_path)
 
-    if min_confidence:
-        mappings = [
-            r for r in mappings
-            if r.get("confidence_level", "").lower() == min_confidence
-        ]
+    mappings = _apply_confidence(mappings, min_confidence, confidence)
 
     if not mappings:
         return ""

@@ -9,11 +9,37 @@ import logging
 from rdflib import Graph, Literal, Namespace, RDF
 from rdflib.namespace import DCTERMS, XSD
 
+from src.exporters.confidence import (
+    filter_by_exact_confidence,
+    filter_by_min_confidence,
+)
+
 logger = logging.getLogger(__name__)
 
 VOCAB = Namespace("https://ke-wp-mapping.org/vocab#")
 MAPPING = Namespace("https://ke-wp-mapping.org/mapping/")
 
+
+
+def _apply_confidence(mappings, min_confidence=None, confidence=None):
+    """Apply whichever confidence filter the caller asked for.
+
+    `min_confidence` is a threshold (medium => medium and above) and backs the
+    public ?min_confidence= query parameter. `confidence` selects a single tier
+    and backs the mutually exclusive _High/_Medium/_Low files in the Zenodo
+    deposit and the admin export bundle. Passing both is a caller bug.
+
+    Before #206 there was only `min_confidence`, and it implemented the
+    partition — so ?min_confidence=medium silently dropped every high-confidence
+    mapping.
+    """
+    if min_confidence and confidence:
+        raise ValueError(
+            "Pass either min_confidence (threshold) or confidence (exact tier), not both"
+        )
+    if confidence:
+        return filter_by_exact_confidence(mappings, confidence)
+    return filter_by_min_confidence(mappings, min_confidence)
 
 def _to_iso8601_datetime(value):
     """Coerce a SQLite-style "YYYY-MM-DD HH:MM:SS" string into ISO-8601.
@@ -31,7 +57,7 @@ def _to_iso8601_datetime(value):
     return value
 
 
-def generate_ke_wp_turtle(mappings, min_confidence=None) -> str:
+def generate_ke_wp_turtle(mappings, min_confidence=None, confidence=None) -> str:
     """Generate Turtle content for KE-WP mappings.
 
     Parameters
@@ -42,8 +68,15 @@ def generate_ke_wp_turtle(mappings, min_confidence=None) -> str:
         confidence_level, approved_by_curator, approved_at_curator,
         suggestion_score.
     min_confidence:
-        Optional lowercase string (e.g. "high"). Rows whose confidence_level
-        does not match are excluded.
+        Optional lowercase threshold ("high", "medium" or "low"). Rows below
+        it are excluded; "medium" therefore keeps medium *and* high, and "low"
+        is equivalent to no filtering. Rows whose own confidence is missing or
+        unrecognised are kept, so an export can never silently empty.
+        Mutually exclusive with `confidence`.
+    confidence:
+        Optional lowercase exact tier. Keeps only rows at precisely this level —
+        the partition the Zenodo deposit's _High/_Medium/_Low files are built
+        on. Mutually exclusive with `min_confidence`.
 
     Returns
     -------
@@ -51,11 +84,7 @@ def generate_ke_wp_turtle(mappings, min_confidence=None) -> str:
         Turtle-formatted string parseable by rdflib. Empty graph skeleton if
         no rows survive filtering.
     """
-    if min_confidence:
-        mappings = [
-            r for r in mappings
-            if r.get("confidence_level", "").lower() == min_confidence
-        ]
+    mappings = _apply_confidence(mappings, min_confidence, confidence)
 
     g = Graph()
     g.bind("ke-wp", VOCAB)
@@ -113,7 +142,7 @@ def generate_ke_wp_turtle(mappings, min_confidence=None) -> str:
     return g.serialize(format="turtle")
 
 
-def generate_ke_go_turtle(mappings, min_confidence=None) -> str:
+def generate_ke_go_turtle(mappings, min_confidence=None, confidence=None) -> str:
     """Generate Turtle content for KE-GO mappings.
 
     Parameters
@@ -131,11 +160,7 @@ def generate_ke_go_turtle(mappings, min_confidence=None) -> str:
     str
         Turtle-formatted string parseable by rdflib.
     """
-    if min_confidence:
-        mappings = [
-            r for r in mappings
-            if r.get("confidence_level", "").lower() == min_confidence
-        ]
+    mappings = _apply_confidence(mappings, min_confidence, confidence)
 
     g = Graph()
     g.bind("ke-wp", VOCAB)
@@ -196,7 +221,7 @@ def generate_ke_go_turtle(mappings, min_confidence=None) -> str:
     return g.serialize(format="turtle")
 
 
-def generate_ke_reactome_turtle(mappings, min_confidence=None, reactome_metadata=None) -> str:
+def generate_ke_reactome_turtle(mappings, min_confidence=None, confidence=None, reactome_metadata=None) -> str:
     """Generate Turtle content for KE-Reactome mappings.
 
     Mirrors generate_ke_go_turtle. Drops goDirection/goNamespace; adds
@@ -222,11 +247,7 @@ def generate_ke_reactome_turtle(mappings, min_confidence=None, reactome_metadata
     str
         Turtle-formatted string parseable by rdflib.
     """
-    if min_confidence:
-        mappings = [
-            r for r in mappings
-            if r.get("confidence_level", "").lower() == min_confidence
-        ]
+    mappings = _apply_confidence(mappings, min_confidence, confidence)
 
     g = Graph()
     g.bind("ke-wp", VOCAB)

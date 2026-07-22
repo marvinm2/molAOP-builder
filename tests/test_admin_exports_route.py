@@ -155,9 +155,14 @@ def test_publish_zenodo_400_when_no_mappings(admin_app, monkeypatch):
 # POST /admin/exports/publish-zenodo — happy path
 # ---------------------------------------------------------------------------
 
-def _gmt_stub(rows, min_confidence=None, **kw):
-    if min_confidence:
-        rows = [r for r in rows if (r.get("confidence_level") or "").lower() == min_confidence]
+def _gmt_stub(rows, min_confidence=None, confidence=None, **kw):
+    # Delegates to the production filters. Naming `confidence` explicitly
+    # matters: regenerate_exports switched to it for the exact-tier partition
+    # in #206, and a stub that absorbed it into **kw would silently stop
+    # filtering while still passing.
+    from src.exporters.gmt_exporter import _apply_confidence
+
+    rows = _apply_confidence(rows, min_confidence, confidence)
     if not rows:
         return ""
     return "\n".join(
