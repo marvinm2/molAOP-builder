@@ -382,9 +382,15 @@ def test_download_ke_reactome_gmt_route(export_seeded):
     body = resp.get_data(as_text=True)
     assert "R-HSA-100" in body
     assert "TP53" in body
+    # A provenance comment block precedes the gene sets; every line of it
+    # starts with '#' and carries no tab, so a GMT parser drops it.
+    header = [l for l in body.splitlines() if l.startswith("#")]
+    assert header and all("\t" not in l for l in header)
+    assert any(l.startswith("# export-revision: ") for l in header)
+    assert resp.headers["X-Export-Revision"]
     # Format: KE{N}_{Slug}_R-HSA-XXX
-    first_line = body.splitlines()[0]
-    tokens = first_line.split("\t")
+    data_lines = [l for l in body.splitlines() if l and not l.startswith("#")]
+    tokens = data_lines[0].split("\t")
     assert tokens[0].startswith("KE1_") and tokens[0].endswith("_R-HSA-100")
 
 
@@ -393,7 +399,7 @@ def test_download_ke_reactome_gmt_min_confidence(export_seeded):
     resp = client.get("/exports/gmt/ke-reactome?min_confidence=High")
     body = resp.get_data(as_text=True)
     # Only u1 (High) survives
-    lines = [l for l in body.splitlines() if l]
+    lines = [l for l in body.splitlines() if l and not l.startswith("#")]
     assert len(lines) == 1
     assert "p53" in lines[0]
 

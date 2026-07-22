@@ -15,6 +15,7 @@ most descriptive faithful term is correct KE->GO practice, and it produced a
 gene set below the Analyser's 5-gene testability floor.
 """
 import json
+import os
 
 import pytest
 
@@ -177,14 +178,40 @@ def test_all_sources_missing_returns_empty(toy_ontology):
     assert out == {}
 
 
-def test_caching_is_per_namespace(tmp_path):
+def test_repeated_reads_of_an_unchanged_file_are_cached(tmp_path):
     bp = tmp_path / "bp.json"
     bp.write_text(json.dumps({"GO:1": ["A"]}))
     first = get_go_annotations("bp", propagated_path=str(bp))
-    bp.write_text(json.dumps({"GO:1": ["CHANGED"]}))
     assert get_go_annotations("bp", propagated_path=str(bp)) is first
     reset_cache()
+    assert get_go_annotations("bp", propagated_path=str(bp)) is not first
+
+
+def test_cache_reloads_when_the_corpus_file_changes(tmp_path):
+    """data/ is a bind mount, so the corpus can be refreshed under the process.
+
+    Holding the first load forever made the GMT export layer stamp a *new*
+    corpus fingerprint onto bytes built from the *old* corpus, and never retry.
+    """
+    bp = tmp_path / "bp.json"
+    bp.write_text(json.dumps({"GO:1": ["A"]}))
+    assert get_go_annotations("bp", propagated_path=str(bp)) == {"GO:1": ["A"]}
+
+    bp.write_text(json.dumps({"GO:1": ["CHANGED"]}))
+    os.utime(bp, (0, 0))  # same size is not enough; prove it is not size alone
     assert get_go_annotations("bp", propagated_path=str(bp)) == {"GO:1": ["CHANGED"]}
+
+
+def test_direct_counts_reload_when_the_corpus_file_changes(tmp_path):
+    from src.services.go_annotation_index import get_go_direct_counts
+
+    bp = tmp_path / "bp_direct.json"
+    bp.write_text(json.dumps({"GO:1": ["A", "B"]}))
+    assert get_go_direct_counts("bp", annotations_path=str(bp)) == {"GO:1": 2}
+
+    bp.write_text(json.dumps({"GO:1": ["A", "B", "C"]}))
+    os.utime(bp, (0, 0))
+    assert get_go_direct_counts("bp", annotations_path=str(bp)) == {"GO:1": 3}
 
 
 def test_merged_includes_both_namespaces(tmp_path):

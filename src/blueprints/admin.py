@@ -1550,6 +1550,7 @@ def regenerate_exports():
     import shutil
     from src.exporters.gmt_exporter import (
         generate_ke_wp_gmt, generate_ke_go_gmt, generate_ke_reactome_gmt,
+        gmt_provenance_header,
     )
     from src.exporters.rdf_exporter import (
         generate_ke_wp_turtle, generate_ke_go_turtle, generate_ke_reactome_turtle,
@@ -1580,25 +1581,39 @@ def regenerate_exports():
         # `confidence=` (exact tier), not `min_confidence=` (threshold since
         # #206): these _All/_High/_Medium/_Low files are a partition, matching
         # the Zenodo deposit layout.
+        # Same provenance block the public download path writes, so a file
+        # taken from the admin rebuild and one taken from /exports/gmt/* are
+        # equally traceable back to a mapping-table state.
+        from src.blueprints.main import _gmt_revision
+        revisions = {
+            "wp": _gmt_revision("wp"),
+            "go": _gmt_revision("go"),
+            "reactome": _gmt_revision("reactome"),
+        }
+
+        def _write_gmt(path, body, resource, conf_filter, rev_key):
+            header = gmt_provenance_header(
+                resource, revision=revisions.get(rev_key), confidence=conf_filter,
+            )
+            path.write_text(header + body, encoding="utf-8")
+            files_written.append(path.name)
+
         for conf_label, conf_filter in [("All", None), ("High", "high"), ("Medium", "medium"), ("Low", "low")]:
             # KE-WP GMT
             gmt_wp = generate_ke_wp_gmt(wp_mappings, cache_model=cache_model_ref, confidence=conf_filter)
             if gmt_wp:
-                p = cache_dir / f"KE-WP_{today}_{conf_label}.gmt"
-                p.write_text(gmt_wp, encoding="utf-8")
-                files_written.append(p.name)
+                _write_gmt(cache_dir / f"KE-WP_{today}_{conf_label}.gmt", gmt_wp,
+                           "KE-WP", conf_filter, "wp")
             # KE-GO GMT
             gmt_go = generate_ke_go_gmt(go_mappings, confidence=conf_filter)
             if gmt_go:
-                p = cache_dir / f"KE-GO_{today}_{conf_label}.gmt"
-                p.write_text(gmt_go, encoding="utf-8")
-                files_written.append(p.name)
+                _write_gmt(cache_dir / f"KE-GO_{today}_{conf_label}.gmt", gmt_go,
+                           "KE-GO", conf_filter, "go")
             # KE-Reactome GMT
             gmt_rx = generate_ke_reactome_gmt(rx_mappings, confidence=conf_filter)
             if gmt_rx:
-                p = cache_dir / f"KE-REACTOME_{today}_{conf_label}.gmt"
-                p.write_text(gmt_rx, encoding="utf-8")
-                files_written.append(p.name)
+                _write_gmt(cache_dir / f"KE-REACTOME_{today}_{conf_label}.gmt", gmt_rx,
+                           "KE-REACTOME", conf_filter, "reactome")
 
         # Turtle exports (no confidence filtering for RDF — include all)
         ttl_wp = generate_ke_wp_turtle(wp_mappings)
