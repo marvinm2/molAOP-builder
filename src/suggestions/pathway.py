@@ -5,9 +5,10 @@ Provides intelligent pathway suggestions based on Key Events using AOP-Wiki and 
 import hashlib
 import json
 import logging
+import os
 import re
 from difflib import SequenceMatcher
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import requests
 from src import PROJECT_ROOT
@@ -23,13 +24,28 @@ logger = logging.getLogger(__name__)
 class PathwaySuggestionService:
     """Service for generating pathway suggestions based on Key Events"""
 
-    def __init__(self, cache_model=None, config=None, embedding_service=None, ke_override_model=None):
+    def __init__(
+        self,
+        cache_model=None,
+        config=None,
+        embedding_service=None,
+        ke_override_model=None,
+        wikipathways_annotations_path: str = 'data/wikipathways_gene_annotations.json',
+    ):
         self.cache_model = cache_model
         self.config = config or ConfigLoader.get_default_config()
         self.embedding_service = embedding_service
         self.ke_override_model = ke_override_model
         self.aop_wiki_endpoint = "https://aopwiki.rdf.bigcat-bioinformatics.org/sparql"
         self.wikipathways_endpoint = "https://sparql.wikipathways.org/sparql"
+
+        # Pathway -> gene symbols, the snapshot written by
+        # scripts/download_wikipathways_annotations.py. Sizing search and
+        # suggestion rows from it is the whole point of #223: the alternative
+        # is a SPARQL round-trip per keystroke behind a 100/hr rate limit.
+        # Degrades to {} — a missing corpus must cost the chip, not the search.
+        self.wikipathways_gene_annotations: Dict[str, list] = {}
+        self._load_wikipathways_annotations(wikipathways_annotations_path)
 
     def get_pathway_suggestions(
         self, ke_id: str, ke_title: str, bio_level: str = None, limit: int = 10
@@ -94,6 +110,49 @@ class PathwaySuggestionService:
                 "ke_id": ke_id,
                 "ke_title": ke_title,
             }
+
+    def _load_wikipathways_annotations(self, path: str) -> None:
+        """Load the WikiPathways gene-membership snapshot, tolerating its absence.
+
+        `data/*.json` is gitignored and reaches production through a bind mount,
+        so this is a mount-only dependency. If it is missing the service must
+        behave exactly as before rather than report zero genes for all 803
+        pathways — a warning on every candidate would be worse than no chip.
+        """
+        resolved = path if os.path.isabs(path) else os.path.join(PROJECT_ROOT, path)
+        if not os.path.exists(resolved):
+            logger.info("WikiPathways gene annotations not found: %s", resolved)
+            return
+        try:
+            with open(resolved, 'r', encoding='utf-8') as f:
+                self.wikipathways_gene_annotations.update(json.load(f))
+            logger.info(
+                "Loaded %d WikiPathways gene-annotation entries",
+                len(self.wikipathways_gene_annotations),
+            )
+        except Exception as e:
+            logger.warning("Could not load WikiPathways gene annotations: %s", e)
+
+    def _gene_count_for(self, pathway_id: str) -> Optional[int]:
+        """Resolved gene-set size for a pathway, or None when it is unknown (#223).
+
+        None, not 0, on a miss — and this is where WikiPathways differs from GO
+        and Reactome. Their annotation files cover their whole search corpus, so
+        an absent key genuinely means "no genes". The WikiPathways snapshot is
+        deliberately filtered to [10, 500] genes by
+        scripts/download_wikipathways_annotations.py, so an absent key means the
+        pathway was excluded by size, not that it has no genes. WP5434 (511
+        genes) and WP528 (7) are both real, both mapped, and both absent.
+        Reporting either as 0 would be a fabrication; the frontend suppresses
+        the chip on None.
+
+        Search and embedding suggestions draw from data/pathway_metadata.json,
+        whose 803 IDs are set-equal to the snapshot's, so in those paths a
+        resolved count is always available when the file is mounted.
+        """
+        annotations = getattr(self, 'wikipathways_gene_annotations', None) or {}
+        genes = annotations.get(pathway_id)
+        return len(genes) if genes is not None else None
 
     def _get_genes_from_ke(self, ke_id: str) -> List[Dict[str, str]]:
         """Extract gene identifier triples ({ncbi, hgnc, symbol}) for a Key Event."""
@@ -171,7 +230,15 @@ class PathwaySuggestionService:
                 # Add total gene counts and recalculate confidence scores
                 for pathway in pathway_results:
                     pathway_id = pathway["pathwayID"]
-                    pathway_gene_count = pathway_gene_counts.get(pathway_id, 100)  # Default fallback
+                    # SPARQL first — it is live and unfiltered. The snapshot is
+                    # the fallback; the literal 100 remains only for a pathway
+                    # neither knows about, where it feeds specificity and must
+                    # stay a number (#223).
+                    pathway_gene_count = pathway_gene_counts.get(pathway_id)
+                    if pathway_gene_count is None:
+                        pathway_gene_count = self._gene_count_for(pathway_id)
+                    if pathway_gene_count is None:
+                        pathway_gene_count = 100
                     pathway["pathway_total_genes"] = pathway_gene_count
 
                     # Calculate pathway specificity
@@ -547,7 +614,11 @@ class PathwaySuggestionService:
                         'description_similarity': result['description_similarity'],
                         'suggestion_type': 'embedding_based',
                         'match_types': ['embedding'],  # For UI badge display
-                        'primary_evidence': 'semantic_similarity'  # For UI primary evidence label
+                        'primary_evidence': 'semantic_similarity',  # For UI primary evidence label
+                        # Under v1.5 the gene weight is 0, so an embedding-only
+                        # suggestion is the norm — and until #223 it was the one
+                        # kind of suggestion that carried no size at all.
+                        'pathway_total_genes': self._gene_count_for(result['pathwayID']),
                     }
                     suggestions.append(suggestion)
 
@@ -643,6 +714,7 @@ class PathwaySuggestionService:
                         'suggestion_type': 'ontology_tag',
                         'match_types': ['ontology'],
                         'primary_evidence': 'ontology_tags',
+                        'pathway_total_genes': self._gene_count_for(pathway['pathwayID']),
                         'ontology_match_details': {
                             'exact_matches': exact_matches,
                             'fuzzy_matches': fuzzy_matches,
@@ -765,6 +837,12 @@ class PathwaySuggestionService:
                 pathway.setdefault('matching_gene_count', gene_signal_item.get('matching_gene_count', 0))
                 pathway.setdefault('gene_overlap_ratio', gene_signal_item.get('gene_overlap_ratio', 0.0))
 
+            # Gene-set size must survive the merge whichever signal contributed
+            # the base item (#223). The gene signal carries a live SPARQL count
+            # and wins; anything else falls back to the snapshot.
+            if not pathway.get('pathway_total_genes'):
+                pathway['pathway_total_genes'] = self._gene_count_for(pathway['pathwayID'])
+
             # ontology_confidence is sourced from the pre-built map (display-only; not in weighted sum)
             ont_score = ontology_map.get(pathway['pathwayID'], 0.0)
 
@@ -869,6 +947,7 @@ class PathwaySuggestionService:
                                 "description_similarity": 1.0,
                                 "relevance_score": 1.0,
                                 "pathwaySvgUrl": f"https://www.wikipathways.org/wikipathways-assets/pathways/{pathway['pathwayID']}/{pathway['pathwayID']}.svg",
+                                "pathway_total_genes": self._gene_count_for(pathway["pathwayID"]),
                             }
                         ]
                 # An explicit WP-prefixed query that misses is a miss, not a
@@ -903,6 +982,7 @@ class PathwaySuggestionService:
                             "description_similarity": round(desc_similarity, 3),
                             "relevance_score": round(max_similarity, 3),
                             "pathwaySvgUrl": f"https://www.wikipathways.org/wikipathways-assets/pathways/{pathway['pathwayID']}/{pathway['pathwayID']}.svg",
+                            "pathway_total_genes": self._gene_count_for(pathway["pathwayID"]),
                         }
                     )
 

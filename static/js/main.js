@@ -2739,6 +2739,7 @@ This helps identify gaps in existing pathways for future development.">❓</span
             suggestions.forEach((suggestion, index) => {
                 const matchTypeBadges = this.getMatchTypeBadges(suggestion.match_types || []);
                 const geneOverlapChip = this.renderGeneOverlapChip(suggestion, data.genes_found || 0);
+                const geneSetChip = this.renderGeneSetSizeChip(suggestion.pathway_total_genes);
                 const borderClass = this.getBorderClassForMatch(suggestion.match_types || []);
                 const finalScoreBar = this.createFinalScoreBar(suggestion);
                 const primaryEvidence = this.formatPrimaryEvidence(suggestion.primary_evidence);
@@ -2771,7 +2772,7 @@ This helps identify gaps in existing pathways for future development.">❓</span
                                     <div>
                                         <strong style="font-size: 14px;">${suggestion.pathwayTitle}</strong>
                                         ${matchTypeBadges}
-                                        ${geneOverlapChip}
+                                        ${geneOverlapChip}${geneSetChip}
                                     </div>
                                     ${finalScoreBar}
                                 </div>
@@ -3712,8 +3713,9 @@ This helps identify gaps in existing pathways for future development.">❓</span
                      data-pathway-id="${this.escapeHtml(result.pathwayID)}" data-pathway-title="${this.escapeHtml(result.pathwayTitle)}" data-pathway-description="${this.escapeHtml(result.pathwayDescription || '')}">
                     <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px;">
                         <div style="flex: 1;">
-                            <div class="text-dark-heading" style="font-weight: bold; margin-bottom: 4px;">
+                            <div class="text-dark-heading" style="display: flex; align-items: center; gap: 6px; font-weight: bold; margin-bottom: 4px; flex-wrap: wrap;">
                                 ${titleHighlighted}
+                                ${this.renderGeneSetSizeChip(result.pathway_total_genes)}
                             </div>
                             <div class="text-muted" style="font-size: 11px; margin-bottom: 4px;">
                                 ID: ${result.pathwayID}
