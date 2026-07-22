@@ -862,9 +862,91 @@ _VALID_MAPPING_TYPES = {
 }
 _VALID_MIN_CONFIDENCE = {None, "high", "medium", "low"}
 
+# Files under data/ whose contents end up inside a generated GMT. They are a
+# bind mount in every deployment (docker-compose mounts ./data), so a corpus
+# refresh lands without an image rebuild and would otherwise leave the cached
+# GMT describing the previous corpus. WikiPathways gene sets are not listed:
+# they come from the live SPARQL endpoint via CacheModel, not from a file.
+_GMT_CORPUS_FILES = {
+    "go": (
+        "go_bp_gene_annotations.json",
+        "go_bp_gene_annotations_propagated.json",
+        "go_bp_hierarchy.json",
+        "go_mf_gene_annotations.json",
+        "go_mf_gene_annotations_propagated.json",
+        "go_mf_hierarchy.json",
+    ),
+    "reactome": ("reactome_gene_annotations.json",),
+}
+
+_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
+
+
+def _gmt_source_model(mapping_type: str):
+    """The mapping model a GMT type is generated from.
+
+    Read through the module globals on every call: app initialisation assigns
+    them after import, and the tests monkeypatch them.
+    """
+    if mapping_type.startswith("wp"):
+        return mapping_model
+    if mapping_type.startswith("go"):
+        return go_mapping_model
+    return reactome_mapping_model
+
+
+def _corpus_fingerprint(filenames) -> str:
+    """(size, mtime) of each gene-annotation file backing a GMT type."""
+    parts = []
+    for name in filenames:
+        try:
+            st = (_DATA_DIR / name).stat()
+            parts.append(f"{name}:{st.st_size}:{int(st.st_mtime)}")
+        except OSError:
+            parts.append(f"{name}:-")
+    return ";".join(parts)
+
+
+def _gmt_revision(mapping_type: str):
+    """Fingerprint of everything a GMT's content depends on, or None if unknown.
+
+    None means "cannot tell" and is treated as stale by the caller, so an
+    unavailable model or an unreadable table costs a regeneration rather than
+    silently pinning a stale file.
+    """
+    model = _gmt_source_model(mapping_type)
+    revision_fn = getattr(model, "revision", None)
+    if not callable(revision_fn):
+        return None
+    try:
+        table_revision = revision_fn()
+    except Exception as e:
+        logger.warning("Could not determine mapping revision for KE-%s GMT: %s", mapping_type, e)
+        return None
+    corpus = _corpus_fingerprint(_GMT_CORPUS_FILES.get(mapping_type.split("-")[0], ()))
+    return f"{table_revision}|{corpus}"
+
 
 def _get_or_generate_gmt(mapping_type: str, min_confidence: str = None):
-    """Return (path, filename) for GMT file, generating it if not cached."""
+    """Return (path, filename) for GMT file, regenerating it when the data moved on.
+
+    The cache used to be write-once per calendar day: the filename carried
+    today's date and the only staleness test was `if not cache_path.exists()`.
+    Approving, editing, rejecting or deleting a mapping therefore had no effect
+    on these files until midnight, while /api/v1/*-mappings reflected the change
+    at once — two public surfaces of the same database disagreeing silently, for
+    up to 24 hours (#212). It bites hardest on the molAOP Analyser, which reads
+    its GO and Reactome gene sets from here but its WikiPathways mappings from
+    the REST API, so a mid-curation run mixes today's WP with yesterday's GO and
+    Reactome and reports all three as current.
+
+    Staleness is now decided by a revision fingerprint recorded in a sidecar
+    next to the cache file, the same mechanism the Turtle exports got in #211.
+    Fingerprinting the source rather than hooking the write paths is deliberate:
+    it covers approval, rejection, admin edit, deletion and accepted change
+    proposals alike, including any write path added later, because it asks the
+    table what it holds instead of trusting callers to remember to invalidate.
+    """
     from src.exporters.gmt_exporter import (
         generate_ke_wp_gmt, generate_ke_go_gmt,
         generate_ke_centric_wp_gmt, generate_ke_centric_go_gmt,
@@ -892,7 +974,23 @@ def _get_or_generate_gmt(mapping_type: str, min_confidence: str = None):
     if safe is None:
         abort(404)
     cache_path = Path(safe)
-    if not cache_path.exists():
+    stamp_path = Path(str(cache_path) + ".rev")
+
+    revision = _gmt_revision(mapping_type)
+    cached_revision = None
+    if stamp_path.exists():
+        try:
+            cached_revision = stamp_path.read_text(encoding="utf-8").strip()
+        except Exception:
+            cached_revision = None
+
+    stale = (
+        not cache_path.exists()
+        or revision is None
+        or cached_revision != revision
+    )
+
+    if stale:
         EXPORT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         if mapping_type == "wp":
             mappings = mapping_model.get_all_mappings() if mapping_model else []
@@ -917,6 +1015,13 @@ def _get_or_generate_gmt(mapping_type: str, min_confidence: str = None):
         else:
             # Write empty placeholder so next request doesn't re-query
             cache_path.write_text("", encoding="utf-8")
+        if revision is not None:
+            try:
+                stamp_path.write_text(revision, encoding="utf-8")
+            except Exception as e:
+                # A cache that cannot record its revision regenerates on every
+                # request — slower, never wrong.
+                logger.warning("Could not write export revision stamp %s: %s", stamp_path, e)
     return cache_path, filename
 
 

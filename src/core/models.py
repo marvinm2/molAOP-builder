@@ -1,6 +1,7 @@
 """
 Database models for KE-WP Mapping Application
 """
+import hashlib
 import logging
 import secrets
 import sqlite3
@@ -1737,18 +1738,30 @@ class MappingCountsMixin:
             conn.close()
 
     def revision(self) -> str:
-        """Cheap fingerprint of the table's current contents.
+        """Fingerprint of the table's current contents.
 
-        Used to decide whether a cached export is stale. Row count alone would
-        miss an in-place edit, and a delete-plus-insert would leave it
-        unchanged, so pair it with the latest updated_at.
+        Used to decide whether a cached export is stale. This was COUNT(*)
+        paired with MAX(updated_at), which misses real edits on the live data:
+        the mapping tables hold updated_at in two formats side by side, ISO
+        '2026-07-22T14:20:46' from the application layer and SQLite's
+        '2026-07-22 19:45:08' from CURRENT_TIMESTAMP, and 'T' sorts after ' ',
+        so MAX() can sit on an older ISO row while a newer CURRENT_TIMESTAMP
+        row is written underneath it. A count-plus-max pair also cannot see a
+        delete-plus-insert, nor a column corrected by hand without touching
+        updated_at.
+
+        Hashing the rows removes the whole class of misses. These tables hold
+        hundreds of rows, not millions, so the read costs less than the
+        regeneration a false "unchanged" answer would wrongly skip.
         """
         conn = self.db.get_connection()
         try:
-            count, latest = conn.execute(
-                f"SELECT COUNT(*), COALESCE(MAX(updated_at), '') FROM {self.TABLE}"
-            ).fetchone()
-            return f"{count}:{latest}"
+            digest = hashlib.sha256()
+            for row in conn.execute(f"SELECT * FROM {self.TABLE} ORDER BY id"):
+                digest.update(repr(tuple(row)).encode("utf-8"))
+                digest.update(b"\x00")
+            count = self._count(conn)
+            return f"{count}:{digest.hexdigest()[:32]}"
         finally:
             conn.close()
 

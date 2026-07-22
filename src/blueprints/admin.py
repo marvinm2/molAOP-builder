@@ -1548,11 +1548,18 @@ def admin_exports():
 def regenerate_exports():
     """Clear and rebuild all cached export files (GMT + Turtle)."""
     import shutil
-    from pathlib import Path
-    from src.exporters.gmt_exporter import generate_ke_wp_gmt, generate_ke_go_gmt
-    from src.exporters.rdf_exporter import generate_ke_wp_turtle, generate_ke_go_turtle
+    from src.exporters.gmt_exporter import (
+        generate_ke_wp_gmt, generate_ke_go_gmt, generate_ke_reactome_gmt,
+    )
+    from src.exporters.rdf_exporter import (
+        generate_ke_wp_turtle, generate_ke_go_turtle, generate_ke_reactome_turtle,
+    )
 
-    cache_dir = Path("static/exports")
+    # Same directory constant the public download routes use, rather than a
+    # second copy of the literal — the two must not be able to drift.
+    from src.blueprints.main import EXPORT_CACHE_DIR as cache_dir
+    from src.blueprints.main import reactome_metadata
+
     try:
         if cache_dir.exists():
             shutil.rmtree(cache_dir)
@@ -1560,6 +1567,11 @@ def regenerate_exports():
 
         wp_mappings = mapping_model.get_all_mappings() if mapping_model else []
         go_mappings = go_mapping_model.get_all_mappings() if go_mapping_model else []
+        # Reactome was missing from this handler entirely (#227): the rmtree
+        # above removed KE-REACTOME_*.gmt and ke-reactome-mappings.ttl and
+        # nothing wrote them back, so the one action an admin has for "rebuild
+        # everything" left the dashboard's third resource absent.
+        rx_mappings = reactome_mapping_model.get_all_mappings() if reactome_mapping_model else []
 
         import datetime
         today = datetime.date.today().isoformat()
@@ -1581,6 +1593,12 @@ def regenerate_exports():
                 p = cache_dir / f"KE-GO_{today}_{conf_label}.gmt"
                 p.write_text(gmt_go, encoding="utf-8")
                 files_written.append(p.name)
+            # KE-Reactome GMT
+            gmt_rx = generate_ke_reactome_gmt(rx_mappings, confidence=conf_filter)
+            if gmt_rx:
+                p = cache_dir / f"KE-REACTOME_{today}_{conf_label}.gmt"
+                p.write_text(gmt_rx, encoding="utf-8")
+                files_written.append(p.name)
 
         # Turtle exports (no confidence filtering for RDF — include all)
         ttl_wp = generate_ke_wp_turtle(wp_mappings)
@@ -1593,6 +1611,12 @@ def regenerate_exports():
         if ttl_go:
             p = cache_dir / "ke-go-mappings.ttl"
             p.write_text(ttl_go, encoding="utf-8")
+            files_written.append(p.name)
+
+        ttl_rx = generate_ke_reactome_turtle(rx_mappings, reactome_metadata=reactome_metadata)
+        if ttl_rx:
+            p = cache_dir / "ke-reactome-mappings.ttl"
+            p.write_text(ttl_rx, encoding="utf-8")
             files_written.append(p.name)
 
         logger.info("Export cache rebuilt: %s", files_written)
