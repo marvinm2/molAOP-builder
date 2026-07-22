@@ -315,6 +315,59 @@ docker-compose down
 docker-compose down -v
 ```
 
+### Database Backups
+
+`ke_wp_mapping.db` is the upstream source the Molecular AOP Analyser consumes,
+so losing it loses the curation both tools rest on. On the Swarm deployment the
+database lives on GlusterFS, which is replica 2 — that is **not** a backup, since
+it replicates deletions and corruption faithfully.
+
+Backups run as a **Swarm cron job**, not as a cron daemon inside the container.
+The container runs a single gunicorn process as a non-root user and cannot start
+cron: the `/etc/cron.d/ke-wp-backup` file and the entrypoint's
+`service cron start` that used to ship here ran after `USER appuser`, failed as
+non-root, and were swallowed by `|| true`. The mechanism looked deployed for
+months while never producing a single backup (issue #215).
+
+| Property | Value |
+|----------|-------|
+| Job | `cronjobs_molaop-builder-backup` (swarm-cronjob) |
+| Schedule | Daily 02:00 UTC |
+| Defined in | `/mnt/gluster/docker/cronjobs/stack.yml` on tgx1; canonical source `TGX-UM/cronjobs` |
+| Payload | `scripts/backup_db.sh`, run in a one-shot container off this repo's image |
+| Output | `/mnt/gluster/docker/molaop-builder/data/backups/ke_wp_mapping_<ts>.db` |
+| Retention | 7 days (`RETENTION_DAYS`) |
+
+The job reads the database file directly on the shared mount rather than
+`docker exec`-ing into the running app, so it is node-independent: it works
+wherever the scheduler places it and does not pin either service to a node.
+
+`backup_db.sh` uses `sqlite3 .backup` (the [Online Backup API](https://sqlite.org/backup.html)),
+which is safe while the application is writing, then runs `PRAGMA integrity_check`
+and deletes the backup if it fails. Never copy the `.db` file without its `-wal`
+and `-shm` companions — that yields a torn snapshot.
+
+```bash
+# Run off-schedule
+ssh tgx1 "docker service scale cronjobs_molaop-builder-backup=1"
+ssh tgx1 "docker service logs cronjobs_molaop-builder-backup"
+
+# Or against the running container, after significant curation
+ssh tgx1 'docker exec $(docker ps -qf name=molaop-builder) /app/scripts/backup_db.sh'
+
+# Restore: stop the service, replace the file, start it again
+ssh tgx1 "docker service scale molaop-builder=0"
+ssh tgx1 "cp /mnt/gluster/docker/molaop-builder/data/backups/<snapshot>.db \
+             /mnt/gluster/docker/molaop-builder/data/ke_wp_mapping.db"
+ssh tgx1 "docker service scale molaop-builder=1"
+```
+
+> **Known limitation:** backups land beside the live database on the same mount,
+> so they survive node loss but not an accidental `rm -rf` of the data directory.
+> Copying them off-cluster belongs to the cluster-wide tier-1/tier-2 backup plan
+> (`operations/backup-strategy.md` in the cluster docs), which is not yet
+> implemented and is the cluster admin's call.
+
 ### Monitoring and Health Checks
 
 The application includes built-in health checks:
