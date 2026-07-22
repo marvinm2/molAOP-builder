@@ -224,7 +224,9 @@
         <strong>Data Sources:</strong>
         Gene lists sourced from WikiPathways SPARQL
         (<a href="https://sparql.wikipathways.org/sparql" target="_blank" rel="noopener">https://sparql.wikipathways.org/sparql</a>).
-        GO gene annotations from <code>go_bp_gene_annotations.json</code> (pre-computed).
+        GO gene annotations from <code>go_bp_gene_annotations_propagated.json</code> (pre-computed).
+        Gene sets are propagated over the GO <code>is_a</code>/<code>part_of</code> closure,
+        so a term carries the genes annotated to all of its descendants (the GO true-path rule).
         License: CC0.
     </div>
 </div>
