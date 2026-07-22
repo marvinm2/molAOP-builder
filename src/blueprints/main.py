@@ -40,6 +40,12 @@ EXPORT_CACHE_DIR = Path("static/exports")
 # ---------------------------------------------------------------------------
 _EXPORTS_BASE = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'static', 'exports'))
 
+# NOTE (#211): the five *.gmt entries below are dead. The GMT cache names its
+# files with *today's* date (see _get_or_generate_gmt), so a file called
+# KE-WP_2026-03-04_All.gmt has not existed since that day and the preview
+# silently returns {"available": false}. Only the three .ttl entries, whose
+# filenames are not date-stamped, actually resolve. Left as-is here because the
+# fix belongs with the GMT cache-naming change; tracked separately.
 PREVIEW_ALLOWLIST = {
     # WikiPathways
     ("wp", "gmt"):          os.path.join(_EXPORTS_BASE, "KE-WP_2026-03-04_All.gmt"),
@@ -108,47 +114,27 @@ def get_mapping_stats():
         "go_by_confidence": {},
         "reactome_by_confidence": {},
     }
-    try:
-        conn = mapping_model.db.get_connection()
+
+    # Counting is delegated to the models so the cards and /api/v1 cannot drift:
+    # both now reach the same COUNT statement (MappingCountsMixin._count). This
+    # function used to carry its own raw SQL per table (#211).
+    #
+    # Each resource is counted independently and failures are swallowed to a
+    # zero: the landing page is the public front door and must render degraded
+    # rather than 500.
+    for key, conf_key, model in (
+        ("wp_total", "wp_by_confidence", mapping_model),
+        ("go_total", "go_by_confidence", go_mapping_model),
+        ("reactome_total", "reactome_by_confidence", reactome_mapping_model),
+    ):
+        if not model:
+            continue
         try:
-            stats["wp_total"] = conn.execute("SELECT COUNT(*) FROM mappings").fetchone()[0]
-            for row in conn.execute(
-                "SELECT LOWER(confidence_level), COUNT(*) FROM mappings GROUP BY LOWER(confidence_level)"
-            ).fetchall():
-                stats["wp_by_confidence"][row[0]] = row[1]
-        finally:
-            conn.close()
-    except Exception as e:
-        logger.warning("Failed to query mapping stats: %s", e)
-    try:
-        if go_mapping_model:
-            conn = go_mapping_model.db.get_connection()
-            try:
-                stats["go_total"] = conn.execute("SELECT COUNT(*) FROM ke_go_mappings").fetchone()[0]
-                for row in conn.execute(
-                    "SELECT LOWER(confidence_level), COUNT(*) FROM ke_go_mappings GROUP BY LOWER(confidence_level)"
-                ).fetchall():
-                    stats["go_by_confidence"][row[0]] = row[1]
-            finally:
-                conn.close()
-    except Exception as e:
-        logger.warning("Failed to query GO mapping stats: %s", e)
-    try:
-        if reactome_mapping_model:
-            conn = reactome_mapping_model.db.get_connection()
-            try:
-                stats["reactome_total"] = conn.execute(
-                    "SELECT COUNT(*) FROM ke_reactome_mappings"
-                ).fetchone()[0]
-                for row in conn.execute(
-                    "SELECT LOWER(confidence_level), COUNT(*) FROM ke_reactome_mappings"
-                    " GROUP BY LOWER(confidence_level)"
-                ).fetchall():
-                    stats["reactome_by_confidence"][row[0]] = row[1]
-            finally:
-                conn.close()
-    except Exception as e:
-        logger.warning("Failed to query Reactome mapping stats: %s", e)
+            stats[key] = model.count_all()
+            stats[conf_key] = model.count_by_confidence()
+        except Exception as e:
+            logger.warning("Failed to query %s stats: %s", key, e)
+
     stats["total"] = stats["wp_total"] + stats["go_total"] + stats["reactome_total"]
     return stats
 
@@ -943,24 +929,73 @@ def download_ke_reactome_centric_gmt():
     return send_file(str(cache_path), as_attachment=True, download_name=filename, mimetype="text/plain")
 
 
+def _get_or_generate_turtle(filename, model, generator, **generator_kwargs):
+    """Serve a cached Turtle export, regenerating it when the table has moved on.
+
+    These caches used to be write-once — `if not cache_path.exists()` with no
+    invalidation anywhere — so a mapping approved after the first download was
+    never reflected. Verified in production on 2026-07-22: /exports/rdf/ke-go
+    served 10 mappings while the database held 11 (#211). Only a redeploy, which
+    wipes the in-image cache directory, ever refreshed them.
+
+    Staleness is decided by the model's revision fingerprint, recorded in a
+    sidecar next to the cache file. Regenerating unconditionally is not an
+    option: the generators rebuild from get_all_mappings() and this is a public
+    download path.
+    """
+    cache_path = EXPORT_CACHE_DIR / filename
+    stamp_path = cache_path.with_suffix(cache_path.suffix + ".rev")
+
+    try:
+        revision = model.revision() if model else "0:"
+    except Exception as e:
+        logger.warning("Could not determine revision for %s: %s", filename, e)
+        revision = None
+
+    cached_revision = None
+    if stamp_path.exists():
+        try:
+            cached_revision = stamp_path.read_text(encoding="utf-8").strip()
+        except Exception:
+            cached_revision = None
+
+    stale = (
+        not cache_path.exists()
+        or revision is None
+        or cached_revision != revision
+    )
+
+    if stale:
+        EXPORT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        mappings = model.get_all_mappings() if model else []
+        if mappings:
+            content = generator(mappings, **generator_kwargs)
+            cache_path.write_text(content or "", encoding="utf-8")
+        else:
+            # No mappings → write an empty placeholder so the 503 branch below
+            # fires. The generators emit a non-empty @prefix prelude even for an
+            # empty input (rdflib always writes prefix declarations), which would
+            # otherwise pass the st_size check and hand clients a half-formed
+            # Turtle file.
+            cache_path.write_text("", encoding="utf-8")
+        if revision is not None:
+            try:
+                stamp_path.write_text(revision, encoding="utf-8")
+            except Exception as e:
+                # A cache that cannot record its revision simply regenerates
+                # every request — slower, never wrong.
+                logger.warning("Could not write export revision stamp %s: %s", stamp_path, e)
+
+    return cache_path
+
+
 @main_bp.route("/exports/rdf/ke-wp")
 def download_ke_wp_rdf():
     """Download KE-WP RDF/Turtle file."""
     from src.exporters.rdf_exporter import generate_ke_wp_turtle
-    cache_path = EXPORT_CACHE_DIR / "ke-wp-mappings.ttl"
-    if not cache_path.exists():
-        EXPORT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        mappings = mapping_model.get_all_mappings() if mapping_model else []
-        if mappings:
-            content = generate_ke_wp_turtle(mappings)
-            cache_path.write_text(content or "", encoding="utf-8")
-        else:
-            # No mappings → write empty placeholder so the 503 branch fires below.
-            # generate_ke_wp_turtle([]) emits a non-empty @prefix prelude
-            # (rdflib's Graph.serialize always writes prefix declarations),
-            # which would otherwise bypass the st_size == 0 check and return
-            # a half-formed Turtle file to clients.
-            cache_path.write_text("", encoding="utf-8")
+    cache_path = _get_or_generate_turtle(
+        "ke-wp-mappings.ttl", mapping_model, generate_ke_wp_turtle
+    )
     if not cache_path.exists() or cache_path.stat().st_size == 0:
         return jsonify({"error": "No KE-WP mappings available for RDF export"}), 503
     return send_file(str(cache_path), as_attachment=True, download_name="ke-wp-mappings.ttl", mimetype="text/turtle")
@@ -970,20 +1005,9 @@ def download_ke_wp_rdf():
 def download_ke_go_rdf():
     """Download KE-GO RDF/Turtle file."""
     from src.exporters.rdf_exporter import generate_ke_go_turtle
-    cache_path = EXPORT_CACHE_DIR / "ke-go-mappings.ttl"
-    if not cache_path.exists():
-        EXPORT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        mappings = go_mapping_model.get_all_mappings() if go_mapping_model else []
-        if mappings:
-            content = generate_ke_go_turtle(mappings)
-            cache_path.write_text(content or "", encoding="utf-8")
-        else:
-            # No mappings → write empty placeholder so the 503 branch fires below.
-            # generate_ke_go_turtle([]) emits a non-empty @prefix prelude
-            # (rdflib's Graph.serialize always writes prefix declarations),
-            # which would otherwise bypass the st_size == 0 check and return
-            # a half-formed Turtle file to clients.
-            cache_path.write_text("", encoding="utf-8")
+    cache_path = _get_or_generate_turtle(
+        "ke-go-mappings.ttl", go_mapping_model, generate_ke_go_turtle
+    )
     if not cache_path.exists() or cache_path.stat().st_size == 0:
         return jsonify({"error": "No KE-GO mappings available for RDF export"}), 503
     return send_file(str(cache_path), as_attachment=True, download_name="ke-go-mappings.ttl", mimetype="text/turtle")
@@ -993,16 +1017,12 @@ def download_ke_go_rdf():
 def download_ke_reactome_rdf():
     """Download KE-Reactome RDF/Turtle file."""
     from src.exporters.rdf_exporter import generate_ke_reactome_turtle
-    cache_path = EXPORT_CACHE_DIR / "ke-reactome-mappings.ttl"
-    if not cache_path.exists():
-        EXPORT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        mappings = reactome_mapping_model.get_all_mappings() if reactome_mapping_model else []
-        if mappings:
-            content = generate_ke_reactome_turtle(mappings, reactome_metadata=reactome_metadata)
-            cache_path.write_text(content or "", encoding="utf-8")
-        else:
-            # No mappings → write empty placeholder so the 503 branch fires below
-            cache_path.write_text("", encoding="utf-8")
+    cache_path = _get_or_generate_turtle(
+        "ke-reactome-mappings.ttl",
+        reactome_mapping_model,
+        generate_ke_reactome_turtle,
+        reactome_metadata=reactome_metadata,
+    )
     if not cache_path.exists() or cache_path.stat().st_size == 0:
         return jsonify({"error": "No KE-Reactome mappings available for RDF export"}), 503
     return send_file(str(cache_path), as_attachment=True, download_name="ke-reactome-mappings.ttl", mimetype="text/turtle")

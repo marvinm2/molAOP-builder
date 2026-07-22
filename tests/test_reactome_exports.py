@@ -443,3 +443,45 @@ def test_download_ke_reactome_rdf_503_when_empty(client, monkeypatch):
     resp = client.get("/exports/rdf/ke-reactome")
     assert resp.status_code == 503
     assert "No KE-Reactome mappings available" in resp.get_json()["error"]
+
+
+def test_rdf_export_cache_reflects_new_mappings(export_seeded):
+    """A mapping added after the first download must appear on the next one.
+
+    Regression guard for the stale-cache half of #211. These caches were
+    write-once — `if not cache_path.exists()` with no invalidation anywhere —
+    so an approval after the first request was never reflected until a redeploy
+    wiped the in-image cache directory. Verified in production on 2026-07-22:
+    /exports/rdf/ke-go served 10 mappings while the database held 11.
+    """
+    client = export_seeded
+
+    first = client.get("/exports/rdf/ke-reactome")
+    assert first.status_code == 200
+    g = Graph()
+    g.parse(data=first.get_data(as_text=True), format="turtle")
+    assert len(list(g.triples((None, RDF.type, VOCAB.KeyEventReactomeMapping)))) == 2
+
+    rm = main_bp_mod.reactome_mapping_model
+    conn = rm.db.get_connection()
+    try:
+        conn.execute(
+            "INSERT INTO ke_reactome_mappings (uuid, ke_id, ke_title, reactome_id,"
+            " pathway_name, species, confidence_level, approved_by_curator,"
+            " approved_at_curator, suggestion_score, proposed_by)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            ("u3", "KE 9", "Necrosis", "R-HSA-300", "Regulated Necrosis",
+             "Homo sapiens", "High", "github:c", "2026-01-03T00:00:00", 0.8,
+             "github:c"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    second = client.get("/exports/rdf/ke-reactome")
+    assert second.status_code == 200
+    g2 = Graph()
+    g2.parse(data=second.get_data(as_text=True), format="turtle")
+    assert len(list(g2.triples((None, RDF.type, VOCAB.KeyEventReactomeMapping)))) == 3, (
+        "The cached Turtle export did not pick up a newly inserted mapping"
+    )
