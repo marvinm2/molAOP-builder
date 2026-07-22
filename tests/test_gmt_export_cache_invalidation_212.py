@@ -366,6 +366,30 @@ def test_absent_corpus_files_do_not_raise(gmt_env, tmp_path, monkeypatch):
     assert main_bp_mod._gmt_revision("go") is not None
 
 
+def test_same_size_corpus_edit_within_a_second_is_still_detected(
+    gmt_env, tmp_path, monkeypatch
+):
+    """The export fingerprint must carry the same nanosecond mtime resolution as
+    go_annotation_index._source_fingerprint. With int(st.st_mtime) (1-second),
+    an edit that keeps the file size and lands in the same second reloads the GO
+    index but leaves this fingerprint unchanged — so the GMT would go on serving
+    stale bytes while /api/ke-genes moved, the exact divergence #212 closes."""
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    corpus = data_dir / "reactome_gene_annotations.json"
+    # Two payloads of identical byte length; only the gene identity differs.
+    corpus.write_text('{"R-HSA-100": ["AAAA"]}')
+    # Both states share one whole second; they differ only in the nanosecond
+    # field, so int(st.st_mtime) collapses them and only st_mtime_ns tells apart.
+    os.utime(corpus, ns=(1_700_000_000_000_000_000, 1_700_000_000_100_000_000))
+    monkeypatch.setattr(main_bp_mod, "_DATA_DIR", data_dir)
+
+    first = main_bp_mod._gmt_revision("reactome")
+    corpus.write_text('{"R-HSA-100": ["BBBB"]}')
+    os.utime(corpus, ns=(1_700_000_000_000_000_000, 1_700_000_000_900_000_000))
+    assert main_bp_mod._gmt_revision("reactome") != first
+
+
 def _write_json(path, obj):
     import json as _json
     path.write_text(_json.dumps(obj), encoding="utf-8")

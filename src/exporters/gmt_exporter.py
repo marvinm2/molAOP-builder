@@ -56,12 +56,16 @@ def gmt_provenance_header(
     provenance is written as comment lines.
 
     Every line starts with ``#`` and contains no tab, so a GMT parser splitting
-    on tabs sees a single field and drops the line for want of genes. Verified
-    against the molAOP Analyser's two parsers
-    (``services/api_service.py``: ``parse_gmt_reference_sets``,
-    ``parse_gmt_pathway_gene_map``), both of which `continue` on
-    ``len(fields) < 3`` before their ID regexes are ever applied, and against
-    GSEApy's ``read_gmt``.
+    on tabs sees a single field and no genes. The molAOP Analyser — the consumer
+    that matters here — drops the lines outright: both parsers in
+    ``services/api_service.py`` (``parse_gmt_reference_sets``,
+    ``parse_gmt_pathway_gene_map``) `continue` on ``len(fields) < 3`` before
+    their ID regexes are ever applied. GSEApy's ``read_gmt`` is more literal — it
+    returns each comment line as a gene set with an empty member list — but they
+    are inert: ``prerank``/``enrich`` size-filter empty sets out, so the analysis
+    result is unchanged. The same holds for the ``readLines``/``strsplit`` R
+    consumers advertised on the downloads page (fgsea, clusterProfiler), which
+    likewise yield empty, ignorable sets rather than choking.
     """
     if generated_at is None:
         generated_at = datetime.datetime.now(datetime.timezone.utc)

@@ -916,7 +916,12 @@ def _corpus_fingerprint(filenames) -> str:
     for name in filenames:
         try:
             st = (_DATA_DIR / name).stat()
-            parts.append(f"{name}:{st.st_size}:{int(st.st_mtime)}")
+            # Nanosecond mtime, matching go_annotation_index._source_fingerprint.
+            # int(st.st_mtime) has 1-second resolution, so a same-size corpus
+            # edit within a second would reload the GO index but leave this
+            # export fingerprint unchanged — the GMT would then disagree with
+            # /api/ke-genes, the exact divergence class this cache exists to close.
+            parts.append(f"{name}:{st.st_size}:{st.st_mtime_ns}")
         except OSError:
             parts.append(f"{name}:-")
     return ";".join(parts)
