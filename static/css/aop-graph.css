@@ -611,6 +611,11 @@
     color: #166534;
 }
 
+.gene-group__type-badge--reactome {
+    background: #e6f4f7;
+    color: #005A6C;
+}
+
 .gene-group__genes {
     display: none;
     list-style: none;
