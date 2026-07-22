@@ -1,15 +1,24 @@
 #!/bin/bash
 # /app/scripts/backup_db.sh
 # SQLite backup using Online Backup API (safe during active writes).
-# Schedule: daily at 02:00 container time. Retention: 7 days.
 # Source: https://sqlite.org/backup.html
+#
+# Scheduled daily at 02:00 UTC as a Swarm cron job, NOT by a cron daemon inside
+# this container — see "Database backups" in CLAUDE.md. The job runs this same
+# script in a one-shot container off the same image, with the data directory
+# bind-mounted, so it works on whichever node the scheduler picks.
+#
+# Run it by hand after significant curation:
+#   ssh tgx1 "docker exec \$(docker ps -qf name=molaop-builder) /app/scripts/backup_db.sh"
 set -euo pipefail
 
-DB_PATH="/app/data/ke_wp_mapping.db"
-BACKUP_DIR="/app/data/backups"
+# Overridable so the Swarm job (and local testing) can point at other paths
+# without editing the script.
+DB_PATH="${DB_PATH:-/app/data/ke_wp_mapping.db}"
+BACKUP_DIR="${BACKUP_DIR:-/app/data/backups}"
+RETENTION_DAYS="${RETENTION_DAYS:-7}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 BACKUP_FILE="${BACKUP_DIR}/ke_wp_mapping_${TIMESTAMP}.db"
-RETENTION_DAYS=7
 
 mkdir -p "${BACKUP_DIR}"
 

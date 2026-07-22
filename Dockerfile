@@ -14,7 +14,11 @@ RUN pip install --no-cache-dir --prefix=/install \
 FROM python:3.12-slim-bookworm
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 FLASK_APP=app.py FLASK_ENV=production
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends curl sqlite3 cron \
+# sqlite3 is the backup script's engine (Online Backup API). No cron package:
+# the container runs a single gunicorn process as a non-root user, so it cannot
+# start a cron daemon — backups are scheduled on the Swarm instead (issue #215,
+# see "Database backups" in CLAUDE.md).
+RUN apt-get update && apt-get install -y --no-install-recommends curl sqlite3 \
     && rm -rf /var/lib/apt/lists/* \
     && rm -rf /var/cache/debconf/*-old /var/lib/dpkg/*-old /var/log/dpkg.log /var/log/apt/*
 
@@ -40,9 +44,6 @@ COPY --from=builder /install /usr/local
 COPY --chown=appuser:appuser . .
 RUN mkdir -p /app/static/css /app/static/js /app/data /app/logs /app/data/backups \
     && chown appuser:appuser /app/static/css /app/static/js /app/data /app/logs /app/data/backups
-# Install backup crontab
-COPY scripts/ke-wp-backup /etc/cron.d/ke-wp-backup
-RUN chmod 0644 /etc/cron.d/ke-wp-backup
 # Make scripts executable
 RUN chmod +x /app/scripts/backup_db.sh /app/scripts/docker-entrypoint.sh
 USER appuser
