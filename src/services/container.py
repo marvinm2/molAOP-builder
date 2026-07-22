@@ -467,6 +467,9 @@ class ServiceContainer:
                     config=scoring_config,
                     embedding_service=self.embedding_service,
                     ke_override_model=self.ke_override_model,
+                    # Passed as a callable so the metadata index stays lazy —
+                    # the service only needs it when a caller omits ke_title.
+                    ke_metadata_index=lambda: self.ke_metadata_index,
                 )
                 logger.info("ReactomeSuggestionService instance created")
             except Exception as e:
