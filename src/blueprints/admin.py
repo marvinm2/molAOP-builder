@@ -15,7 +15,13 @@ from src.utils.text import sanitize_log
 
 from src.services.monitoring import monitor_performance
 from src.services.rate_limiter import submission_rate_limit
-from src.core.schemas import AdminNotesSchema, SecurityValidation, validate_request_data
+from src.core.schemas import (
+    GO_CONFIDENCE_LEVELS,
+    GO_CONNECTION_TYPES,
+    AdminNotesSchema,
+    SecurityValidation,
+    validate_request_data,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -721,6 +727,26 @@ def approve_go_proposal(proposal_id: int):
         admin_evidence = _parse_int(request.form.get("evidence_score"))
         admin_rescored = None not in (admin_connection, admin_specificity, admin_evidence)
 
+        # A reviewer may also refine the connection type and override the computed
+        # confidence from the review panel. Both are optional and validated here
+        # rather than trusted, since this route writes the live mapping.
+        submitted_connection_type = (proposal.get("new_pair_connection_type")
+                                     or proposal.get("proposed_connection_type"))
+        admin_connection_type = (request.form.get("connection_type") or "").strip().lower()
+        if admin_connection_type and admin_connection_type not in GO_CONNECTION_TYPES:
+            return jsonify({
+                "error": "Invalid connection_type",
+                "allowed": sorted(GO_CONNECTION_TYPES),
+            }), 400
+        connection_type = admin_connection_type or submitted_connection_type
+
+        admin_confidence = (request.form.get("confidence_level") or "").strip().lower()
+        if admin_confidence and admin_confidence not in GO_CONFIDENCE_LEVELS:
+            return jsonify({
+                "error": "Invalid confidence_level",
+                "allowed": sorted(GO_CONFIDENCE_LEVELS),
+            }), 400
+
         # If the admin supplied a full re-score, it wins and confidence is recomputed
         # server-side from those values.
         if admin_rescored:
@@ -761,6 +787,40 @@ def approve_go_proposal(proposal_id: int):
                 else "v1"
             )
 
+        # An explicit confidence from the reviewer is the last word — it overrides both
+        # the submitter's value and anything recomputed from the dimensions. Curators
+        # need this for the cases the weighted average gets wrong on its own.
+        if admin_confidence:
+            confidence_level = admin_confidence
+
+        # Record what the reviewer actually changed, so an edited approval is not
+        # indistinguishable from a rubber-stamped one in the audit log.
+        edits = []
+        if admin_rescored and (
+            admin_connection != proposal.get("proposed_connection_score")
+            or admin_specificity != proposal.get("proposed_specificity_score")
+            or admin_evidence != proposal.get("proposed_evidence_score")
+        ):
+            edits.append(
+                "scores %s/%s/%s -> %s/%s/%s" % (
+                    proposal.get("proposed_connection_score"),
+                    proposal.get("proposed_specificity_score"),
+                    proposal.get("proposed_evidence_score"),
+                    admin_connection, admin_specificity, admin_evidence,
+                )
+            )
+        if admin_connection_type and admin_connection_type != submitted_connection_type:
+            edits.append("connection_type %s -> %s" % (submitted_connection_type, admin_connection_type))
+        submitted_confidence = (proposal.get("new_pair_confidence_level")
+                                or proposal.get("proposed_confidence"))
+        if admin_confidence and admin_confidence != submitted_confidence:
+            edits.append("confidence %s -> %s" % (submitted_confidence, admin_confidence))
+        if edits:
+            logger.info(
+                "GO proposal %s edited on approval by %s: %s",
+                sanitize_log(proposal_id), sanitize_log(admin_username), sanitize_log("; ".join(edits)),
+            )
+
         # Phase C: stamp the new GO mapping with current GO + AOP-Wiki versions.
         go_version_fields = _source_version_fields("go")
         new_mapping_id = go_mapping_model.create_mapping(
@@ -768,7 +828,7 @@ def approve_go_proposal(proposal_id: int):
             ke_title=proposal["ke_title"],
             go_id=proposal["go_id"],
             go_name=proposal["go_name"],
-            connection_type=proposal.get("new_pair_connection_type") or proposal.get("proposed_connection_type"),
+            connection_type=connection_type,
             confidence_level=confidence_level,
             created_by=proposal.get("provider_username") or admin_username,
             connection_score=connection_score,
