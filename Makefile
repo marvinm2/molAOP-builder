@@ -37,10 +37,10 @@ docker-compose-down:	## Stop docker-compose
 migrate:	## Run database migration
 	python migrate_csv_to_db.py
 
-go-hierarchy:	## Build GO hierarchy data (IC scores, ancestors, depths)
+go-hierarchy:	## Build GO hierarchy data (IC scores, ancestors, depths) + the full-namespace search index
 	python scripts/precompute_go_hierarchy.py
 
-go-corpus:	## Rebuild + size-filter the GO BP suggestion corpus (hierarchy -> filtered IDs -> subset embeddings/metadata)
+go-corpus:	## Rebuild the GO BP corpora (hierarchy + search index -> filtered IDs -> subset embeddings/metadata)
 	python scripts/precompute_go_hierarchy.py
 	python scripts/subset_go_corpus.py
 

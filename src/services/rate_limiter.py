@@ -2,6 +2,7 @@
 Rate limiting functionality for API endpoints
 """
 import logging
+import os
 import sqlite3
 import time
 from collections import defaultdict
@@ -11,6 +12,28 @@ from flask import current_app, g, jsonify, request
 from src.utils.text import sanitize_log
 
 logger = logging.getLogger(__name__)
+
+
+def _env_limit(var_name: str, default: int) -> int:
+    """Read a per-hour rate limit from the environment, falling back to `default`.
+
+    Curation sprints legitimately need to exceed the everyday submission ceiling —
+    a few hundred proposals at 20/h takes most of a day — so the limits are tunable
+    per deployment instead of hardcoded. A missing, non-numeric or non-positive
+    value keeps the default, so a typo can never silently disable the limiter.
+    """
+    raw = os.getenv(var_name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        logger.warning("%s=%r is not an integer — using default %d", var_name, raw, default)
+        return default
+    if value <= 0:
+        logger.warning("%s=%d is not positive — using default %d", var_name, value, default)
+        return default
+    return value
 
 
 class RateLimiter:
@@ -164,17 +187,24 @@ def rate_limit(limit: int = 100, window: int = 3600, per_endpoint: bool = True):
     return decorator
 
 
-# Specific rate limit decorators for different use cases
+# Specific rate limit decorators for different use cases.
+# Each ceiling is overridable per deployment via the matching env var; see _env_limit.
+# Evaluated at import time, so a change needs a service restart to take effect.
+SPARQL_RATE_LIMIT = _env_limit("SPARQL_RATE_LIMIT_PER_HOUR", 500)
+SUBMISSION_RATE_LIMIT = _env_limit("SUBMISSION_RATE_LIMIT_PER_HOUR", 20)
+GENERAL_RATE_LIMIT = _env_limit("GENERAL_RATE_LIMIT_PER_HOUR", 1000)
+
+
 def sparql_rate_limit(f):
     """Rate limit for SPARQL endpoints (increased for development)"""
-    return rate_limit(limit=500, window=3600)(f)
+    return rate_limit(limit=SPARQL_RATE_LIMIT, window=3600)(f)
 
 
 def submission_rate_limit(f):
     """Rate limit for data submission endpoints"""
-    return rate_limit(limit=20, window=3600)(f)
+    return rate_limit(limit=SUBMISSION_RATE_LIMIT, window=3600)(f)
 
 
 def general_rate_limit(f):
     """General rate limit for other endpoints"""
-    return rate_limit(limit=1000, window=3600)(f)
+    return rate_limit(limit=GENERAL_RATE_LIMIT, window=3600)(f)

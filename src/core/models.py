@@ -3240,8 +3240,13 @@ class GoMappingModel(MappingCountsMixin):
         """Approve a GO new-pair proposal on a caller-managed connection.
 
         Uses the proposal's stored new_pair_confidence_level / proposed_confidence
-        directly (skips admin re-score widget per D-15/Pitfall 4). assessment_version
-        is always "v1" for the bulk path.
+        directly (skips admin re-score widget per D-15/Pitfall 4), and carries the
+        submitter's own proposed_* dimension scores onto the mapping. D-15 rules out
+        the *admin re-score widget*, which the bulk path has no way to collect; it does
+        not rule out the scores the curator already recorded at submission time.
+        Dropping those made every bulk-approved mapping look like an unscored v1 legacy
+        row. assessment_version is "v2" when all three stored scores are present,
+        "v1" otherwise.
 
         Executes the create_mapping INSERT and then the update_go_mapping provenance
         UPDATE both on `conn` without calling conn.commit() or conn.close(). Returns
@@ -3255,13 +3260,20 @@ class GoMappingModel(MappingCountsMixin):
 
         mapping_uuid = str(uuid_lib.uuid4())
 
-        # D-15/Pitfall 4: use stored confidence fallback; do NOT read dimension scores.
+        # D-15/Pitfall 4: use stored confidence fallback; do NOT re-score as admin.
         confidence_level = (
             proposal.get("new_pair_confidence_level")
             or proposal.get("proposed_confidence")
         )
-        # Bulk path always uses v1 (no admin re-score widget)
-        assessment_version = "v1"
+        # Carry the submitter's recorded dimension scores through to the mapping.
+        connection_score = proposal.get("proposed_connection_score")
+        specificity_score = proposal.get("proposed_specificity_score")
+        evidence_score = proposal.get("proposed_evidence_score")
+        assessment_version = (
+            "v2"
+            if None not in (connection_score, specificity_score, evidence_score)
+            else "v1"
+        )
 
         go_name = proposal.get("go_name", "")
         go_direction = None
@@ -3289,9 +3301,9 @@ class GoMappingModel(MappingCountsMixin):
                 proposal.get("provider_username") or approved_by_curator,
                 mapping_uuid,
                 go_direction,
-                None,   # connection_score — bulk skips admin re-score (D-15)
-                None,   # specificity_score
-                None,   # evidence_score
+                connection_score,
+                specificity_score,
+                evidence_score,
                 assessment_version,
                 proposal.get("go_namespace", "biological_process"),
                 go_release_date,

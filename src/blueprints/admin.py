@@ -716,12 +716,17 @@ def approve_go_proposal(proposal_id: int):
             except (ValueError, TypeError):
                 return None
 
-        connection_score = _parse_int(request.form.get("connection_score"))
-        specificity_score = _parse_int(request.form.get("specificity_score"))
-        evidence_score = _parse_int(request.form.get("evidence_score"))
+        admin_connection = _parse_int(request.form.get("connection_score"))
+        admin_specificity = _parse_int(request.form.get("specificity_score"))
+        admin_evidence = _parse_int(request.form.get("evidence_score"))
+        admin_rescored = None not in (admin_connection, admin_specificity, admin_evidence)
 
-        # If all three dimension scores are present, compute confidence server-side
-        if connection_score is not None and specificity_score is not None and evidence_score is not None:
+        # If the admin supplied a full re-score, it wins and confidence is recomputed
+        # server-side from those values.
+        if admin_rescored:
+            connection_score = admin_connection
+            specificity_score = admin_specificity
+            evidence_score = admin_evidence
             try:
                 services = current_app.service_container
                 ke_go_config = services.scoring_config.ke_go_assessment
@@ -739,15 +744,22 @@ def approve_go_proposal(proposal_id: int):
                 )
             assessment_version = "v2"
         else:
-            # Legacy flow — no dimension scores provided
+            # No admin re-score — the common case, since the admin UI's approve button
+            # posts only admin_notes + csrf_token. Carry the submitter's own recorded
+            # dimension scores onto the mapping rather than discarding them; dropping
+            # them made every GUI-approved mapping look like an unscored v1 legacy row.
             confidence_level = (
                 proposal.get("new_pair_confidence_level")
                 or proposal.get("proposed_confidence")
             )
-            connection_score = None
-            specificity_score = None
-            evidence_score = None
-            assessment_version = "v1"
+            connection_score = proposal.get("proposed_connection_score")
+            specificity_score = proposal.get("proposed_specificity_score")
+            evidence_score = proposal.get("proposed_evidence_score")
+            assessment_version = (
+                "v2"
+                if None not in (connection_score, specificity_score, evidence_score)
+                else "v1"
+            )
 
         # Phase C: stamp the new GO mapping with current GO + AOP-Wiki versions.
         go_version_fields = _source_version_fields("go")
@@ -1258,6 +1270,13 @@ def bulk_approve_go_proposals():
                 failed.append({"id": pid, "reason": "not found"})
             elif p["status"] != "pending":
                 failed.append({"id": pid, "reason": f"already {p['status']}"})
+            elif p["mapping_id"] is not None or p["proposed_delete"]:
+                # _approve_on_conn unconditionally INSERTs a new ke_go_mappings row,
+                # so a revision or deletion proposal must never reach it — that would
+                # duplicate the mapping instead of updating or deleting it. Only
+                # new-pair proposals (mapping_id IS NULL, proposed_delete falsy) are
+                # bulk-approvable; the rest go through the single-approve route.
+                failed.append({"id": pid, "reason": "not a new-pair proposal"})
             else:
                 valid_proposals.append((pid, p))
 

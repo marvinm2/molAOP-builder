@@ -44,6 +44,7 @@ class GoSuggestionService:
         go_embeddings_path='data/go_bp_embeddings.npz',
         go_name_embeddings_path='data/go_bp_name_embeddings.npz',
         go_metadata_path='data/go_bp_metadata.json',
+        go_search_metadata_path='data/go_bp_search_metadata.json',
         go_annotations_path='data/go_bp_gene_annotations.json',
         go_mf_embeddings_path='data/go_mf_embeddings.npz',
         go_mf_name_embeddings_path='data/go_mf_name_embeddings.npz',
@@ -63,9 +64,22 @@ class GoSuggestionService:
         self.go_metadata = {}
         self.go_gene_annotations = {}
 
+        # Full-namespace search index. Distinct from go_metadata ON PURPOSE:
+        # go_metadata is the [MIN_GENES, MAX_GENES] suggestion corpus, and several
+        # ranking paths enumerate it as "the candidate set" (see
+        # _compute_gene_overlap_scores_for), so widening it would silently push
+        # ~24k unranked terms into the Suggested list. Search has no such coupling —
+        # it is a SequenceMatcher over name + definition and touches no embeddings —
+        # so it can safely span the whole namespace, which is what lets a curator
+        # reach a term the gene-count filter excluded.
+        # Falls back to go_metadata when the artifact is absent, preserving the old
+        # (subsetted) search behaviour rather than breaking search outright.
+        self.go_search_metadata = {}
+
         self._load_go_embeddings(go_embeddings_path)
         self._load_go_name_embeddings(go_name_embeddings_path)
         self._load_go_metadata(go_metadata_path)
+        self._load_go_search_metadata(go_search_metadata_path)
         self._load_go_annotations(go_annotations_path)
 
         # Load GO BP hierarchy for IC-based scoring and redundancy filtering.
@@ -181,6 +195,34 @@ class GoSuggestionService:
     def _load_go_metadata(self, path):
         """Load GO BP metadata (names, definitions, relationships)"""
         self._load_json_into(path, self.go_metadata, 'GO BP metadata')
+
+    def _load_go_search_metadata(self, path):
+        """Load the full-namespace GO BP search index (names + definitions).
+
+        Written by precompute_go_hierarchy.py and covering every active BP term,
+        not just the gene-count-filtered suggestion corpus. If the artifact is
+        missing — an older data mount, or a dev checkout with no corpus — fall back
+        to the suggestion metadata so search still works, just narrowly, exactly as
+        it did before this index existed.
+        """
+        self._load_json_into(path, self.go_search_metadata, 'GO BP search metadata')
+        if not self.go_search_metadata:
+            logger.info(
+                "GO BP search index absent at %s — falling back to the suggestion "
+                "corpus (%d terms); search will not reach gene-count-filtered terms.",
+                path, len(self.go_metadata),
+            )
+
+    @property
+    def bp_search_index(self) -> dict:
+        """The BP dict that /search_go_terms resolves against.
+
+        The full-namespace index when it loaded, otherwise the gene-count-filtered
+        suggestion corpus. Reading it through one accessor keeps the fallback true
+        for every construction path, including the partially-initialised instances
+        tests build with __new__.
+        """
+        return getattr(self, 'go_search_metadata', None) or self.go_metadata
 
     def _load_go_annotations(self, path):
         """Load GO BP gene annotations, ontology-propagated (#208).
@@ -634,7 +676,18 @@ class GoSuggestionService:
             def_similarity = 0.0
             if go_definition:
                 def_clean = self._clean_text(go_definition)
-                def_similarity = SequenceMatcher(None, query_clean, def_clean).ratio()
+                # ratio() is O(len(query) x len(definition)) and dominates this loop
+                # now that the BP index spans the whole namespace rather than the
+                # ~4k suggestion corpus. real_quick_ratio()/quick_ratio() are difflib's
+                # own *upper bounds* on ratio(), so a term they put below `threshold`
+                # cannot clear it — skipping there changes neither which terms match
+                # nor relevance_score (= max(name, def)). A definition that was already
+                # going to lose to the name score simply reports 0.0 instead of its
+                # exact sub-threshold value.
+                matcher = SequenceMatcher(None, query_clean, def_clean)
+                if (matcher.real_quick_ratio() >= threshold
+                        and matcher.quick_ratio() >= threshold):
+                    def_similarity = matcher.ratio()
 
             max_similarity = max(name_similarity, def_similarity)
 
@@ -704,7 +757,7 @@ class GoSuggestionService:
             if go_id_match:
                 normalized = f"GO:{go_id_match.group(2).zfill(7)}"
                 for meta_dict, ns in [
-                    (self.go_metadata, 'BP'),
+                    (self.bp_search_index, 'BP'),
                     (self.go_mf_metadata, 'MF'),
                 ]:
                     if normalized in meta_dict:
@@ -726,8 +779,8 @@ class GoSuggestionService:
             if not query_clean:
                 return []
 
-            # Search BP metadata
-            results = self._search_metadata(self.go_metadata, query_clean, threshold, 'BP')
+            # Search BP metadata (full namespace, not the suggestion subset)
+            results = self._search_metadata(self.bp_search_index, query_clean, threshold, 'BP')
 
             # Search MF metadata (if loaded)
             if self.go_mf_metadata:
