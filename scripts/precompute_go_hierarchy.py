@@ -104,8 +104,13 @@ DIRECTIONAL_LABEL_RE = re.compile(
         r"\bdown[- ]?regulation\b",
         r"\bincreased?\b",
         r"\bdecreased?\b",
-        r"\bactivated\b",
-        r"\binhibited\b",
+        # NB: "activated"/"inhibited" are deliberately absent — keep in sync with
+        # src/utils/text.py, which carries the same list and the full rationale.
+        # As past participles these qualify a mechanism or a cell state, they do not
+        # sign the term: over all 24,129 BP labels r"\bactivated\b" matched 88 terms
+        # and not one was directional (mostly "<ligand>-activated <receptor> signaling
+        # pathway", plus "peroxisome proliferator activated receptor signaling
+        # pathway"). r"\binhibited\b" matched nothing and shared the same defect.
     ]),
     re.IGNORECASE,
 )
@@ -161,6 +166,7 @@ def parse_obo_file(obo_path, namespace_value='biological_process'):
                     'id': None,
                     'name': None,
                     'namespace': None,
+                    'definition': None,
                     'is_a': [],
                     'part_of': [],
                     'is_obsolete': False,
@@ -179,6 +185,7 @@ def parse_obo_file(obo_path, namespace_value='biological_process'):
                             terms[go_id] = {
                                 'name': current_term['name'],
                                 'namespace': current_term['namespace'],
+                                'definition': current_term['definition'],
                                 'is_a': current_term['is_a'],
                                 'part_of': current_term['part_of'],
                             }
@@ -195,6 +202,15 @@ def parse_obo_file(obo_path, namespace_value='biological_process'):
                 current_term['name'] = line[6:]
             elif line.startswith('namespace: '):
                 current_term['namespace'] = line[11:]
+            elif line.startswith('def: '):
+                # OBO form:  def: "The chemical reactions ..." [GOC:go_curators]
+                # Keep only the quoted text; the trailing xref list is not searchable.
+                body = line[5:]
+                if body.startswith('"'):
+                    end = body.rfind('"')
+                    current_term['definition'] = body[1:end] if end > 0 else body[1:]
+                else:
+                    current_term['definition'] = body
             elif line.startswith('is_a: '):
                 # Strip comment after !
                 parent_id = line[6:].split(' ! ')[0].strip()
@@ -482,6 +498,7 @@ def main():
     annotations_path = f'data/go_{namespace}_gene_annotations.json'
     output_path = f'data/go_{namespace}_hierarchy.json'
     filtered_ids_path = f'data/go_{namespace}_filtered_go_ids.json'
+    search_index_path = f'data/go_{namespace}_search_metadata.json'
 
     logger.info(f"Processing GO hierarchy for namespace: {namespace_value} (root: {root})")
 
@@ -511,6 +528,35 @@ def main():
 
     size_mb = os.path.getsize(output_path) / 1024 / 1024
     logger.info(f"Output: {output_path} ({size_mb:.1f} MB)")
+
+    # Write the SEARCH index: every active term in this namespace, with the
+    # name + definition that /search_go_terms fuzzy-matches on.
+    #
+    # This is deliberately NOT the [MIN_GENES, MAX_GENES] suggestion corpus. That
+    # filter exists to keep the BioBERT-ranked *suggestion* list informative, and it
+    # necessarily discards both tails — terms too specific to carry a gene signature
+    # and terms too generic to discriminate. But a curator who already knows the term
+    # they want must always be able to find it, and before this index existed they
+    # could not: a third of one 196-term curated set was unreachable through the GUI
+    # by any route, because Search resolved against the same subsetted metadata as
+    # Suggested. Search needs no embeddings (it is a SequenceMatcher over these two
+    # fields), so covering the full namespace costs one JSON file and no re-embed.
+    search_index = {
+        go_id: {
+            'name': data['name'],
+            'definition': data.get('definition') or '',
+        }
+        for go_id, data in terms.items()
+    }
+    logger.info(f"Writing {len(search_index)} terms to {search_index_path}...")
+    with open(search_index_path, 'w', encoding='utf-8') as f:
+        json.dump(search_index, f, indent=2)
+    size_mb = os.path.getsize(search_index_path) / 1024 / 1024
+    n_defs = sum(1 for v in search_index.values() if v['definition'])
+    logger.info(
+        "Output: %s (%.1f MB, %d/%d with a definition)",
+        search_index_path, size_mb, n_defs, len(search_index),
+    )
 
     # Write the filtered-ID list: terms whose propagated gene set is in
     # [MIN_GENES, MAX_GENES]. Drives the embedding-corpus subset (subset_go_corpus.py).

@@ -216,8 +216,16 @@ _DIRECTIONAL_GO_LABEL_RE = re.compile(
         r"\bdown[- ]?regulation\b",
         r"\bincreased?\b",
         r"\bdecreased?\b",
-        r"\bactivated\b",
-        r"\binhibited\b",
+        # NB: "activated"/"inhibited" are deliberately absent. As past participles in
+        # GO labels they qualify a mechanism or a cell state, they do not sign the
+        # term: measured over all 24,129 BP labels, r"\bactivated\b" matched 88 terms
+        # and not one was directional — 62 of the form "<ligand>-activated <receptor>
+        # signaling pathway" (TRAIL-, VEGF-, CXCL12-), plus "activated T cell
+        # proliferation" and "peroxisome proliferator activated receptor signaling
+        # pathway". Excluding them hid whole families of receptor-MIE terms from
+        # curators. Genuinely signed variants ("positive regulation of activated T
+        # cell proliferation") are already caught by the regulation patterns above.
+        # r"\binhibited\b" matched nothing at all and carried the same defect.
     ]),
     re.IGNORECASE,
 )
