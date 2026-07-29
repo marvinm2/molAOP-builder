@@ -130,3 +130,16 @@
     </p>
   </div>
 </div>
+
+<script>
+  // /auth/login sends an expired session here with ?login=1 so the sign-in prompt is
+  // already open. Without it the user lands on a page that looks perfectly normal and
+  // has to work out for themselves why their submit failed.
+  (function () {
+    if (new URLSearchParams(window.location.search).get('login') !== '1') return;
+    document.addEventListener('DOMContentLoaded', function () {
+      var m = document.getElementById('login-modal');
+      if (m) m.style.display = 'flex';
+    });
+  }());
+</script>

@@ -25,6 +25,21 @@ def set_models(clients: dict, guest_code=None):
     guest_code_model = guest_code
 
 
+def _start_session(user: dict):
+    """Record a logged-in user and put the session under PERMANENT_SESSION_LIFETIME.
+
+    Flask only applies that lifetime to sessions marked permanent. Nothing marked
+    them, so the configured lifetime never took effect and the cookie lived until
+    the browser closed — while the session-bound CSRF token still expired on its own
+    schedule, which is what actually ended a working session. Marking the session
+    permanent makes the configured lifetime the single thing that governs a login,
+    and because Flask re-issues the cookie on every request it is an idle timeout:
+    a curator working continuously is not logged out.
+    """
+    session.permanent = True
+    session["user"] = user
+
+
 @auth_bp.route("/login/<provider>")
 def login_provider(provider):
     """Initiate OAuth login flow for the given provider"""
@@ -68,11 +83,11 @@ def oauth_callback(provider):
             email = userinfo.get("email", "")
 
         prefixed_username = f"{provider}:{sub}"
-        session["user"] = {
+        _start_session({
             "username": prefixed_username,
             "email": email,
             "provider": provider,
-        }
+        })
         logger.info("User %s logged in via %s", sanitize_log(prefixed_username), sanitize_log(provider))
         next_url = session.pop("login_next_url", None) or url_for("main.landing")
         return redirect(next_url)
@@ -80,6 +95,24 @@ def oauth_callback(provider):
         logger.error("OAuth callback error for %s: %s", sanitize_log(provider), sanitize_log(str(e)))
         session.pop("login_next_url", None)
         return redirect(url_for("main.landing"))
+
+
+@auth_bp.route("/auth/login")
+def login_landing():
+    """Where the client sends a user whose session expired.
+
+    static/js/main.js redirects to `/auth/login` on a 401 from every submit path,
+    and no such route existed — so the one moment a curator most needs to get back
+    in, they landed on "The requested page was not found". Send them to the mapper
+    with the login modal open, preserving where they were so the post-login redirect
+    returns them there.
+    """
+    if session.get("user"):
+        return redirect(url_for("main.mapper"))
+    next_url = request.args.get("next") or request.referrer
+    if next_url:
+        session["login_next_url"] = next_url
+    return redirect(url_for("main.mapper", login="1"))
 
 
 @auth_bp.route("/logout")
@@ -118,11 +151,11 @@ def guest_login_submit():
         logger.warning("Failed guest login attempt")
         return render_template("guest_login.html", error="Invalid, expired, or exhausted access code.")
 
-    session["user"] = {
+    _start_session({
         "username": f"guest-{result['label']}",
         "email": "workshop-guest",
         "is_guest": True,
-    }
+    })
     logger.info("Guest user logged in with label=%s", result["label"])
     next_url = session.pop("login_next_url", None) or url_for("main.landing")
     return redirect(next_url)
