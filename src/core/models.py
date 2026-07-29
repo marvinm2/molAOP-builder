@@ -1864,7 +1864,12 @@ class MappingModel(MappingCountsMixin):
                        assessment_version,
                        -- Phase E.1 source-data versioning columns. Same
                        -- positional-append rule as the Phase 34 fields.
-                       wp_release_date, aopwiki_snapshot_date
+                       wp_release_date, aopwiki_snapshot_date,
+                       -- #240: the RDF exporter emits VOCAB.suggestionScore from
+                       -- this row, and GO/Reactome already select it here. Without
+                       -- it no WikiPathways triple can ever carry a score, however
+                       -- the column is populated.
+                       suggestion_score
                 FROM mappings
                 ORDER BY created_at DESC
             """

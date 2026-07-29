@@ -962,6 +962,12 @@ class KEWPApp {
             connection_type: this.mapConnectionTypeForServer($("#connection_type").val()),
             confidence_level: $("#confidence_level").val(),
             csrf_token: this.csrfToken,
+            // The hidden #suggestion_score input is set when a suggestion card is
+            // clicked and deliberately cleared for search/browse picks, so an absent
+            // key means "chosen without the ranker" rather than "score unknown".
+            // This path builds the payload by hand instead of serialising the form,
+            // which is why the input has to be read explicitly.
+            suggestion_score: $("#suggestion_score").val() || undefined,
             step1: assessmentAnswers.step1 || undefined,
             step2: assessmentAnswers.step2 || undefined,
             step3: assessmentAnswers.step3 || undefined,
