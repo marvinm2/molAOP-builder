@@ -25,6 +25,13 @@ KE_WP_BASIS_OPTIONS = ("known", "likely", "possible", "uncertain")
 KE_WP_SPECIFICITY_OPTIONS = ("specific", "includes", "loose")
 KE_WP_COVERAGE_OPTIONS = ("complete", "keysteps", "minor")
 
+# KE-GO uses its own connection vocabulary (not the KE-WP one above) and the shared
+# confidence tiers. Defined once here because two writers validate against them: the
+# submit schema below, and the admin approve route, where a reviewer may refine both
+# before the live mapping is written.
+GO_CONNECTION_TYPES = ("describes", "involves", "related", "context")
+GO_CONFIDENCE_LEVELS = ("low", "medium", "high")
+
 
 class GoNamespaceField(fields.Field):
     """Marshmallow field that normalizes GO namespace short codes and full names."""
@@ -310,14 +317,14 @@ class GoMappingSchema(Schema):
     connection_type = fields.Str(
         required=True,
         validate=validate.OneOf(
-            ["describes", "involves", "related", "context"],
+            GO_CONNECTION_TYPES,
             error="Invalid connection type",
         ),
     )
     confidence_level = fields.Str(
         required=True,
         validate=validate.OneOf(
-            ["low", "medium", "high"], error="Invalid confidence level"
+            GO_CONFIDENCE_LEVELS, error="Invalid confidence level"
         ),
     )
     go_namespace = GoNamespaceField(load_default="biological_process")

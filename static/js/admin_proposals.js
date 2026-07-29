@@ -56,10 +56,57 @@ var AdminProposals = (function () {
     // static/js/main.js:4420-4460 so reviewer and submitter see the same labels.
     var goDimensionLabels = { 3: 'High', 2: 'Medium', 1: 'Low' };
     var goDimensions = [
-        { key: 'proposed_connection_score', label: 'Connection (biological relevance)' },
-        { key: 'proposed_specificity_score', label: 'Specificity (term precision)' },
-        { key: 'proposed_evidence_score', label: 'Evidence (literature support)' }
+        { key: 'proposed_connection_score', label: 'Connection (biological relevance)', dim: 'connection' },
+        { key: 'proposed_specificity_score', label: 'Specificity (term precision)', dim: 'specificity' },
+        { key: 'proposed_evidence_score', label: 'Evidence (literature support)', dim: 'evidence' }
     ];
+
+    var GO_CONNECTION_TYPES = ['describes', 'involves', 'related', 'context'];
+    var GO_CONNECTION_HINTS = {
+        describes: 'the GO term directly describes the KE mechanism',
+        involves: 'the KE involves this process',
+        related: 'a related process',
+        context: 'provides context'
+    };
+
+    // The reviewer's working copy of a GO assessment, seeded from the submitter's
+    // stored values whenever a proposal is selected. Kept separate from the row data
+    // so "reset to submitted" is possible, and so an untouched review still approves
+    // exactly what the submitter recorded.
+    var _edit = null;
+
+    // Same weights and thresholds the submitter's form uses (static/js/main.js), so
+    // the reviewer sees the confidence the mapper itself would compute. Replaced by
+    // /api/go-scoring-config once that loads, which is the server's own source.
+    var _goScoring = {
+        weights: { connection: 0.33, specificity: 0.33, evidence: 0.34 },
+        thresholds: { high: 2.5, medium: 1.5 }
+    };
+
+    function _loadGoScoringConfig() {
+        if (!window.fetch) return;
+        fetch('/api/go-scoring-config', { credentials: 'same-origin' })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (d) {
+                var c = d && d.ke_go_assessment;
+                if (!c) return;
+                if (c.dimension_weights) _goScoring.weights = c.dimension_weights;
+                if (c.dimension_thresholds) _goScoring.thresholds = c.dimension_thresholds;
+                _refreshComputedConfidence();
+            })
+            .catch(function () { /* the defaults are the shipped values; a miss is not fatal */ });
+    }
+
+    function _computeGoConfidence(c, s, e) {
+        if (!_hasValue(c) || !_hasValue(s) || !_hasValue(e)) return null;
+        var w = _goScoring.weights;
+        var avg = Number(c) * w.connection + Number(s) * w.specificity + Number(e) * w.evidence;
+        var t = _goScoring.thresholds;
+        return {
+            level: avg >= t.high ? 'high' : (avg >= t.medium ? 'medium' : 'low'),
+            score: avg
+        };
+    }
 
     function _hasValue(v) {
         return v !== null && v !== undefined && v !== '';
@@ -278,6 +325,131 @@ var AdminProposals = (function () {
             });
     }
 
+    // -------------------------------------------------------------------------
+    // Editable GO assessment (reviewer refinement before approval)
+    // -------------------------------------------------------------------------
+
+    function _seedEdit(p) {
+        _edit = {
+            submitted: {
+                connection: _hasValue(p.proposed_connection_score) ? Number(p.proposed_connection_score) : null,
+                specificity: _hasValue(p.proposed_specificity_score) ? Number(p.proposed_specificity_score) : null,
+                evidence: _hasValue(p.proposed_evidence_score) ? Number(p.proposed_evidence_score) : null,
+                connection_type: p.connection_type || p.proposed_connection_type || p.new_pair_connection_type || '',
+                confidence: p.confidence || p.proposed_confidence || p.new_pair_confidence_level || ''
+            },
+            confidenceOverride: ''   // '' means "use the computed tier"
+        };
+        _edit.current = {
+            connection: _edit.submitted.connection,
+            specificity: _edit.submitted.specificity,
+            evidence: _edit.submitted.evidence,
+            connection_type: _edit.submitted.connection_type
+        };
+    }
+
+    function _editIsDirty() {
+        if (!_edit) return false;
+        var s = _edit.submitted, c = _edit.current;
+        return c.connection !== s.connection || c.specificity !== s.specificity ||
+               c.evidence !== s.evidence || c.connection_type !== s.connection_type ||
+               (_edit.confidenceOverride && _edit.confidenceOverride !== s.confidence);
+    }
+
+    function _effectiveConfidence() {
+        if (!_edit) return '';
+        if (_edit.confidenceOverride) return _edit.confidenceOverride;
+        var c = _computeGoConfidence(_edit.current.connection, _edit.current.specificity, _edit.current.evidence);
+        return c ? c.level : (_edit.submitted.confidence || '');
+    }
+
+    function _renderGoAssessmentEditor(p) {
+        _seedEdit(p);
+        var rows = goDimensions.map(function (d) {
+            var val = _edit.current[d.dim];
+            var buttons = [3, 2, 1].map(function (score) {
+                var on = (val === score);
+                return '<button type="button" class="go-review-dim-btn' + (on ? ' is-selected' : '') + '"' +
+                    ' data-dimension="' + d.dim + '" data-score="' + score + '"' +
+                    ' aria-pressed="' + (on ? 'true' : 'false') + '"' +
+                    ' style="padding:3px 10px;font-size:12px;cursor:pointer;border:1px solid ' +
+                    (on ? 'var(--color-primary,#29235C);background:var(--color-primary,#29235C);color:#fff' :
+                          'var(--color-border-light,#dee2e6);background:#fff;color:#333') +
+                    ';border-radius:4px;">' + goDimensionLabels[score] + '</button>';
+            }).join(' ');
+            return '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">' +
+                '<span style="font-size:13px;">' + escapeHtml(d.label) + '</span>' +
+                '<span style="white-space:nowrap;">' + buttons + '</span></div>';
+        }).join('');
+
+        var ctOptions = GO_CONNECTION_TYPES.map(function (t) {
+            return '<option value="' + t + '"' + (_edit.current.connection_type === t ? ' selected' : '') + '>' +
+                   t + ' — ' + escapeHtml(GO_CONNECTION_HINTS[t]) + '</option>';
+        }).join('');
+
+        var confOptions = ['', 'high', 'medium', 'low'].map(function (v) {
+            var label = v === '' ? 'Auto (from the scores above)' : v;
+            return '<option value="' + v + '"' + (_edit.confidenceOverride === v ? ' selected' : '') + '>' +
+                   escapeHtml(label) + '</option>';
+        }).join('');
+
+        return '<div id="goReviewEditor">' +
+            '<div style="margin-bottom:8px;">' +
+            '<label for="goReviewConnType" style="display:block;font-size:13px;font-weight:600;margin-bottom:3px;">Connection type</label>' +
+            '<select id="goReviewConnType" style="width:100%;font-size:13px;padding:4px;border:1px solid var(--color-border-light,#dee2e6);border-radius:4px;">' +
+            ctOptions + '</select></div>' +
+            rows +
+            '<div style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
+            '<label for="goReviewConfidence" style="font-size:13px;font-weight:600;">Confidence</label>' +
+            '<select id="goReviewConfidence" style="flex:1;min-width:150px;font-size:13px;padding:4px;border:1px solid var(--color-border-light,#dee2e6);border-radius:4px;">' +
+            confOptions + '</select>' +
+            '<span id="goReviewComputed" style="font-size:12px;color:var(--color-text-muted,#6c757d);"></span>' +
+            '</div>' +
+            '<div id="goReviewDirty" style="margin-top:8px;font-size:12px;display:none;">' +
+            '<span style="color:#7a4b00;">Edited — approving records your values, not the submitter\'s.</span> ' +
+            '<button type="button" id="goReviewReset" style="font-size:12px;padding:2px 8px;cursor:pointer;">Reset</button>' +
+            '</div>' +
+            '</div>';
+    }
+
+    function _refreshComputedConfidence() {
+        if (!_edit) return;
+        var el = document.getElementById('goReviewComputed');
+        if (el) {
+            var c = _computeGoConfidence(_edit.current.connection, _edit.current.specificity, _edit.current.evidence);
+            el.textContent = c ? ('computed: ' + c.level + ' (' + c.score.toFixed(2) + ')') : 'computed: —';
+        }
+        var dirty = document.getElementById('goReviewDirty');
+        if (dirty) dirty.style.display = _editIsDirty() ? 'block' : 'none';
+    }
+
+    function _initGoReviewEditor() {
+        // Delegated once at init; the panel HTML is replaced on every selection.
+        $(document).on('click', '#goReviewEditor .go-review-dim-btn', function () {
+            if (!_edit) return;
+            var dim = this.getAttribute('data-dimension');
+            var score = Number(this.getAttribute('data-score'));
+            _edit.current[dim] = score;
+            $(this).siblings('.go-review-dim-btn').attr('aria-pressed', 'false')
+                .css({ background: '#fff', color: '#333', borderColor: 'var(--color-border-light,#dee2e6)' })
+                .removeClass('is-selected');
+            $(this).attr('aria-pressed', 'true').addClass('is-selected')
+                .css({ background: 'var(--color-primary,#29235C)', color: '#fff', borderColor: 'var(--color-primary,#29235C)' });
+            _refreshComputedConfidence();
+        });
+        $(document).on('change', '#goReviewConnType', function () {
+            if (_edit) { _edit.current.connection_type = this.value; _refreshComputedConfidence(); }
+        });
+        $(document).on('change', '#goReviewConfidence', function () {
+            if (_edit) { _edit.confidenceOverride = this.value; _refreshComputedConfidence(); }
+        });
+        $(document).on('click', '#goReviewReset', function () {
+            // Re-select through the normal path so the panel is rebuilt from the row
+            // data, which reseeds _edit from the submitter's values.
+            if (_currentProposalId !== null) _setCurrentProposal(_currentProposalId);
+        });
+    }
+
     function _renderPanel(proposal) {
         var isPending = (proposal.status === 'pending');
 
@@ -326,7 +498,12 @@ var AdminProposals = (function () {
                 return _hasValue(p[d.key]);
             });
             var body;
-            if (hasGoAssessment) {
+            if (hasGoAssessment && isPending && _config && _config.resource === 'go') {
+                // Editable for a pending GO proposal: a reviewer who disagrees with a
+                // dimension, the connection type or the resulting tier can correct it
+                // here instead of rejecting the proposal and asking for a resubmit.
+                body = _renderGoAssessmentEditor(p);
+            } else if (hasGoAssessment) {
                 body = goDimensions.map(function (d) {
                     var raw = p[d.key];
                     var label = _hasValue(raw) ? (goDimensionLabels[raw] || raw) : '—';
@@ -406,6 +583,10 @@ var AdminProposals = (function () {
             '</div>';
 
         $('#reviewPanelContent').html(html);
+
+        // The computed-confidence readout depends on DOM that only exists once the
+        // panel is in the document.
+        if (document.getElementById('goReviewEditor')) _refreshComputedConfidence();
     }
 
     function _renderPanelEmpty(msg) {
@@ -469,6 +650,23 @@ var AdminProposals = (function () {
         var formData = new FormData();
         formData.append('admin_notes', adminNotes || '');
         formData.append('csrf_token', _config.csrfToken);
+
+        // Carry the GO assessment through explicitly. Sending it even when untouched
+        // is deliberate: it makes the approved mapping a faithful record of what the
+        // panel showed the reviewer, rather than depending on the server re-reading
+        // the proposal row.
+        if (_edit && _config.resource === 'go' && document.getElementById('goReviewEditor')) {
+            var c = _edit.current;
+            if (_hasValue(c.connection) && _hasValue(c.specificity) && _hasValue(c.evidence)) {
+                formData.append('connection_score', c.connection);
+                formData.append('specificity_score', c.specificity);
+                formData.append('evidence_score', c.evidence);
+            }
+            if (c.connection_type) formData.append('connection_type', c.connection_type);
+            // Only send a confidence when the reviewer pinned one; otherwise let the
+            // server compute it from the scores, so the two never disagree.
+            if (_edit.confidenceOverride) formData.append('confidence_level', _edit.confidenceOverride);
+        }
 
         fetch(_config.approveUrl + '/' + proposalId + '/approve', {
             method: 'POST',
@@ -670,6 +868,10 @@ var AdminProposals = (function () {
                 _initCheckboxes();
                 _initKeyboardHandler();
                 _initSidePanel();
+                if (config.resource === 'go') {
+                    _initGoReviewEditor();
+                    _loadGoScoringConfig();
+                }
 
                 // Wire bulk approve button
                 $(document).on('click', '#bulkApproveBtn', function () {

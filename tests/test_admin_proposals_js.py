@@ -265,3 +265,67 @@ class TestAdminProposalsJs:
                 f"admin_go_proposals.html: {attr} references a column "
                 "ke_go_proposals does not have"
             )
+
+    def test_go_review_panel_is_editable(self):
+        """A reviewer must be able to refine the assessment before approving.
+
+        Without this the only way to disagree with a submitted dimension, the
+        connection type or the resulting tier was to reject the proposal and ask
+        for a resubmit.
+        """
+        tests_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(tests_dir)
+        js_path = os.path.join(project_root, "static", "js", "admin_proposals.js")
+        content = open(js_path, encoding="utf-8").read()
+
+        for marker in [
+            "_renderGoAssessmentEditor",     # builds the editable block
+            "goReviewConnType",              # connection-type select
+            "go-review-dim-btn",             # the three High/Medium/Low groups
+            "goReviewConfidence",            # explicit confidence override
+            "goReviewComputed",              # live computed-tier readout
+            "goReviewReset",                 # restore the submitter's values
+            "_computeGoConfidence",          # mirrors the submitter's formula
+        ]:
+            assert marker in content, f"admin_proposals.js: missing {marker}"
+
+        # The editor must only replace the read-only block for a PENDING GO
+        # proposal — an approved or rejected one stays read-only, and the WP and
+        # Reactome queues have a different assessment shape entirely.
+        assert "hasGoAssessment && isPending && _config && _config.resource === 'go'" in content, (
+            "admin_proposals.js: the editable branch must be gated on a pending "
+            "GO proposal"
+        )
+
+        # The edited values have to actually reach the server.
+        approve_start = content.index("function _singleApprove")
+        approve_body = content[approve_start:approve_start + 2000]
+        for field in ["connection_score", "specificity_score", "evidence_score",
+                      "connection_type", "confidence_level"]:
+            assert field in approve_body, (
+                f"_singleApprove does not post {field} — reviewer edits would be "
+                "silently discarded"
+            )
+
+    def test_go_confidence_formula_matches_the_submitter_form(self):
+        """Reviewer and submitter must see the same tier for the same scores."""
+        tests_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(tests_dir)
+        admin_js = open(os.path.join(project_root, "static", "js", "admin_proposals.js"),
+                        encoding="utf-8").read()
+        main_js = open(os.path.join(project_root, "static", "js", "main.js"),
+                       encoding="utf-8").read()
+
+        # Same defaults on both sides; both are overridden from
+        # /api/go-scoring-config at runtime, which is the real source of truth.
+        for token in ["connection: 0.33", "specificity: 0.33", "evidence: 0.34"]:
+            assert token in admin_js, f"admin_proposals.js: default weight {token} missing"
+            assert token in main_js, f"main.js: default weight {token} missing"
+        for token in ["high: 2.5", "medium: 1.5"]:
+            assert token in admin_js, f"admin_proposals.js: default threshold {token} missing"
+            assert token in main_js, f"main.js: default threshold {token} missing"
+
+        assert "/api/go-scoring-config" in admin_js, (
+            "admin_proposals.js: must read the server's scoring config rather than "
+            "relying on hardcoded defaults"
+        )
