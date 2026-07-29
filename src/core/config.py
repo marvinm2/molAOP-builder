@@ -13,12 +13,21 @@ class Config:
     def FLASK_SECRET_KEY(self):
         return os.getenv("FLASK_SECRET_KEY")
 
-    WTF_CSRF_TIME_LIMIT = 3600  # 1 hour CSRF token validity
+    # How long a login lasts, in hours. Applies to both the session and the CSRF
+    # token, which must not diverge: the CSRF token is session-bound, so whichever
+    # expires first ends the login, and a shorter CSRF limit silently caps the
+    # session no matter what the session lifetime says.
+    SESSION_LIFETIME_HOURS = float(os.getenv("SESSION_LIFETIME_HOURS", "2"))
+
+    WTF_CSRF_TIME_LIMIT = int(SESSION_LIFETIME_HOURS * 3600)
 
     # Session Configuration
-    PERMANENT_SESSION_LIFETIME = timedelta(hours=1)
+    PERMANENT_SESSION_LIFETIME = timedelta(hours=SESSION_LIFETIME_HOURS)
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = "Lax"
+    # Idle timeout, not absolute: Flask re-issues the cookie on each request, so an
+    # active curator is never logged out mid-session. Only inactivity expires it.
+    SESSION_REFRESH_EACH_REQUEST = True
 
     # OAuth Configuration
     @property
@@ -134,8 +143,12 @@ class ProductionConfig(Config):
     WTF_CSRF_ENABLED = True
     TESTING = False
 
-    # Stricter session settings for production
-    PERMANENT_SESSION_LIFETIME = timedelta(minutes=30)  # Shorter sessions in production
+    # NB: production used to override PERMANENT_SESSION_LIFETIME to 30 minutes. That
+    # override was inert — nothing set `session.permanent`, so Flask never applied the
+    # lifetime at all and the cookie simply lived until the browser closed. Removing it
+    # keeps the single, now-effective SESSION_LIFETIME_HOURS from the base config rather
+    # than reinstating a stricter number that never actually held. Tune per deployment
+    # with the env var if production warrants something shorter.
 
 
 class TestingConfig(Config):
