@@ -2696,6 +2696,21 @@ table.dataTable tbody td { padding: 8px 12px; font-size: var(--font-size-sm); bo
     border-radius: var(--radius-sm);
 }
 
+/* Explore tables: shown only when the table holds fewer rows than the API
+   reports (#242). Explore is the sole route to revising or deleting an approved
+   mapping, so a short table is a curation gap, not a display quirk — this must
+   read as a fault to report rather than an ordinary paging hint. */
+.table-truncation-notice {
+    margin: 0 0 12px 0;
+    padding: 10px 12px;
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--color-warning-text, #8a6d0b);
+    background: var(--color-warning-bg, #fff8e1);
+    border: 1px solid var(--color-warning-border, #f0d68a);
+    border-radius: var(--radius-sm);
+}
+
 /* Confirmation Dialog Overlay */
 .confirmation-dialog {
     position: fixed;

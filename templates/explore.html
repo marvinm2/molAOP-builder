@@ -65,6 +65,11 @@
             </div>
             <!-- Active filter chips -->
             <div id="active-filter-chips" class="filter-chips"></div>
+            <!-- Shown only if the table ends up holding fewer rows than the API
+                 reports. Explore is the only route to revising or deleting an
+                 approved mapping, so a silently short table means rows that
+                 cannot be curated at all (#242). -->
+            <div id="wp-truncation-notice" class="table-truncation-notice" role="status" style="display:none;"></div>
             <!-- DataTable (AJAX-driven, no server-rendered rows) -->
             <table id="datasetTable" class="display" width="100%">
                 <thead>
@@ -149,6 +154,7 @@
                 </div>
             </div>
             <div id="reactome-active-filter-chips" class="filter-chips"></div>
+            <div id="reactome-truncation-notice" class="table-truncation-notice" role="status" style="display:none;"></div>
             <table id="reactomeDatasetTable" class="display" width="100%">
                 <thead>
                     <tr>
@@ -261,6 +267,63 @@
                    ' (+' + (entries.length - 2) + ' more)';
         }
 
+        // The API clamps per_page at 200. Both tables used to request a single
+        // page of 200 and discard json.pagination, so once the corpus passed 200
+        // rows every mapping beyond that vanished from Explore — and with it the
+        // only "Propose Change" button that can revise or delete it (#242).
+        //
+        // Every page is pulled into the browser rather than paged server-side,
+        // because DataTables owns sort, search and CSV/Excel/PDF export here and
+        // all three have to see the whole set. If that stops being affordable the
+        // fix is server-side paging with sort and search pushed into the API, not
+        // a larger single page.
+        var API_MAX_PER_PAGE = 200;
+        // Backstop against an API that reports total_pages wrongly; 20k rows is
+        // far past any plausible corpus and stops a bad response looping forever.
+        var API_MAX_PAGES = 100;
+
+        function fetchAllMappings(endpoint, params, onDone, onError) {
+            var rows = [];
+
+            function fetchPage(page) {
+                params.set('page', page);
+                params.set('per_page', API_MAX_PER_PAGE);
+                fetch(endpoint + '?' + params.toString(), { headers: { 'Accept': 'application/json' } })
+                    .then(function(r) { return r.json(); })
+                    .then(function(json) {
+                        rows = rows.concat(json.data || []);
+                        var pagination = json.pagination || {};
+                        var totalPages = pagination.total_pages || 0;
+                        if (page < totalPages && page < API_MAX_PAGES) {
+                            fetchPage(page + 1);
+                        } else {
+                            onDone(rows, pagination);
+                        }
+                    })
+                    .catch(onError);
+            }
+
+            fetchPage(1);
+        }
+
+        // A table that is short must say so. A row count that quietly disagrees
+        // with the database is what made the original bug dangerous rather than
+        // merely inconvenient — an audit run against the UI reported the missing
+        // rows as "not present".
+        function showTruncationNotice(elementId, loaded, pagination) {
+            var el = document.getElementById(elementId);
+            if (!el) return;
+            var total = pagination && pagination.total;
+            if (typeof total === 'number' && loaded < total) {
+                el.textContent = 'Showing ' + loaded + ' of ' + total + ' mappings. '
+                    + (total - loaded) + ' could not be loaded and cannot be revised '
+                    + 'or deleted from this table — please report this.';
+                el.style.display = 'block';
+            } else {
+                el.style.display = 'none';
+            }
+        }
+
         $(document).ready(function () {
 
             // Filter state for KE-WP tab
@@ -268,20 +331,21 @@
 
             // KE-WP DataTable (client-side: sort/search handled by DataTables;
             // AOP + confidence filters round-trip to the API so the SPARQL-resolved
-            // AOP filter still applies. All rows are fetched in one page.)
+            // AOP filter still applies. Every API page is fetched — see
+            // fetchAllMappings.)
             var wpTable = $('#datasetTable').DataTable({
                 processing: true,
                 pageLength: 25,
                 ajax: function(data, callback) {
-                    var params = new URLSearchParams({ page: 1, per_page: 200 });
+                    var params = new URLSearchParams();
                     if (wpState.aopId) params.set('aop_id', wpState.aopId);
                     if (wpState.confidence) params.set('confidence_level', wpState.confidence);
-                    fetch('/api/v1/mappings?' + params.toString(), { headers: { 'Accept': 'application/json' } })
-                        .then(function(r) { return r.json(); })
-                        .then(function(json) {
-                            callback({ data: json.data || [] });
-                        })
-                        .catch(function() {
+                    fetchAllMappings('/api/v1/mappings', params,
+                        function(rows, pagination) {
+                            showTruncationNotice('wp-truncation-notice', rows.length, pagination);
+                            callback({ data: rows });
+                        },
+                        function() {
                             callback({ data: [] });
                         });
                 },
@@ -514,15 +578,15 @@
                             processing: true,
                             pageLength: 25,
                             ajax: function(data, callback) {
-                                var params = new URLSearchParams({ page: 1, per_page: 200 });
+                                var params = new URLSearchParams();
                                 if (reactomeState.aopId) params.set('aop_id', reactomeState.aopId);
                                 if (reactomeState.confidence) params.set('confidence_level', reactomeState.confidence);
-                                fetch('/api/v1/reactome-mappings?' + params.toString(), { headers: { 'Accept': 'application/json' } })
-                                    .then(function(r) { return r.json(); })
-                                    .then(function(json) {
-                                        callback({ data: json.data || [] });
-                                    })
-                                    .catch(function() {
+                                fetchAllMappings('/api/v1/reactome-mappings', params,
+                                    function(rows, pagination) {
+                                        showTruncationNotice('reactome-truncation-notice', rows.length, pagination);
+                                        callback({ data: rows });
+                                    },
+                                    function() {
                                         callback({ data: [] });
                                     });
                             },
