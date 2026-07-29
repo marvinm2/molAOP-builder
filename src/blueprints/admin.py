@@ -1733,7 +1733,6 @@ def publish_zenodo():
     """
     import datetime
     import json as json_lib
-    import os
     from pathlib import Path
 
     from src.exporters.zenodo_assembly import (
@@ -1744,11 +1743,22 @@ def publish_zenodo():
     from src.exporters.zenodo_uploader import (
         zenodo_publish,
         persist_meta_with_fallback,
+        resolve_zenodo_token,
         META_FALLBACK_PATH,
     )
 
-    if not os.environ.get("ZENODO_API_TOKEN"):
-        return jsonify({"status": "error", "message": "ZENODO_API_TOKEN not configured"}), 503
+    # Must use the same resolver as the page render and as zenodo_publish
+    # itself. A raw os.environ read here disagreed with both once the token
+    # moved to a Swarm secret: the page rendered the button enabled and every
+    # click returned this 503.
+    if not resolve_zenodo_token("ZENODO_API_TOKEN"):
+        return jsonify({
+            "status": "error",
+            "message": (
+                "Zenodo API token not configured — set the zenodo_api_token "
+                "Docker secret, ZENODO_API_TOKEN_FILE, or ZENODO_API_TOKEN."
+            ),
+        }), 503
 
     meta_path = Path("data/zenodo_meta.json")
     try:
