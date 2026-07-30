@@ -12,8 +12,22 @@
 </ul>
 <p>After selecting a KE, a details panel appears showing the KE description, biological level, and a link to measurement methods on AOP-Wiki. A context panel lists AOP membership and any existing WP / GO / Reactome mappings, and an inline AOP-context graph (Cytoscape) fans out from the chosen KE so you can see the upstream Molecular Initiating Event and downstream Adverse Outcome at a glance.</p>
 
-<h4>Step 2: Select WikiPathway — KE-WP Mapping</h4>
-<p>Choose a related WikiPathway using the <strong>KE-WP Mapping</strong> tab. The system provides three sub-tabs:</p>
+<h4>Step 2: Choose a target resource</h4>
+<p>A Key Event can be mapped to three resources, and they are <strong>peers, not a default
+plus two alternatives</strong>. Pick whichever describes the Key Event best, and map to more
+than one where more than one fits — the tabs, proposal queues and exports are independent.</p>
+<ul>
+    <li><strong>WikiPathways</strong> and <strong>Reactome</strong> give curated pathway
+    models. A mapping says <em>this Key Event is realised by this pathway</em>. Good for a
+    Key Event that names a mechanism.</li>
+    <li><strong>Gene Ontology</strong> gives biological processes and molecular functions,
+    not pathways. A mapping names <em>the process the Key Event is</em>. Usually the better
+    fit for a Key Event describing a single event, where a pathway diagram would be broader
+    than the event itself.</li>
+</ul>
+
+<h4>Step 2a: Select a WikiPathways pathway — KE-WikiPathways Mapping</h4>
+<p>Choose a related pathway using the <strong>KE-WikiPathways Mapping</strong> tab. The system provides three sub-tabs:</p>
 <ul>
     <li><strong>Suggested</strong> - Pathways ranked by BioBERT semantic similarity to the KE description (v1.5, 2026-05-10). Each card shows a "Genes: N/M" overlap chip for context, but gene overlap does not influence the ranking.</li>
     <li><strong>Search</strong> - Search for pathways by name or keywords</li>
@@ -21,7 +35,7 @@
 </ul>
 <p>If the selected KE-WP pair already exists in the database, a duplicate warning is shown before submission.</p>
 
-<h4>Step 2 (alternative): Select GO Term — KE-GO Mapping</h4>
+<h4>Step 2b: Select a GO term — KE-GO Mapping</h4>
 <p>To map a KE to a Gene Ontology Biological Process term, use the <strong>KE-GO Mapping</strong> tab. The system provides two sub-tabs:</p>
 <ul>
     <li><strong>Suggested</strong> - GO BP term suggestions ranked by BioBERT semantic similarity (v1.5, 2026-05-10). Cards show GO term name, definition, matched genes (informational), term depth, and similarity score.</li>
@@ -40,7 +54,7 @@
     of&hellip;</em> are excluded from the suggestion corpus.
 </div>
 
-<h4>Step 2 (alternative): Select Reactome Pathway — KE-Reactome Mapping</h4>
+<h4>Step 2c: Select a Reactome pathway — KE-Reactome Mapping</h4>
 <p>To map a KE to a Reactome pathway, use the <strong>KE-Reactome Mapping</strong> tab. Suggestions follow the same BioBERT pure-semantic ranker (v1.5) used for WP and GO; cards show the Reactome pathway name, the gene-overlap chip (informational), and a similarity score.</p>
 <div class="info-box">
     <strong>Active refinement:</strong> the Reactome tab carries a small "under development" notice. The proposal flow and exports are functional; suggestion thresholds are being calibrated.

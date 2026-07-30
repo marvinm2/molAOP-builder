@@ -1,13 +1,21 @@
 <h2>Getting Started</h2>
 
-<p>Welcome to the Molecular AOP Builder documentation. This application helps researchers map Key Events from AOP-Wiki to WikiPathways, creating valuable connections between adverse outcome pathways and biological pathways.</p>
+<p>Welcome to the Molecular AOP Builder documentation. This application helps researchers connect the Key Events of an Adverse Outcome Pathway to the molecular pathways and processes that underlie them — building the molecular layer of an AOP.</p>
 
 <h3>What is Molecular AOP Builder?</h3>
+<p>A Key Event can be mapped to three target resources, which answer different questions
+and are curated independently. <strong>WikiPathways</strong> and <strong>Reactome</strong>
+supply curated pathway models, so a mapping to either says <em>this Key Event is realised
+by this pathway</em>. <strong>Gene Ontology</strong> supplies biological processes and
+molecular functions rather than pathways, so a GO mapping names <em>the process the Key
+Event is</em> — often the better fit for a Key Event that describes a single event rather
+than a mechanism with a diagram.</p>
+
 <p>The Molecular AOP Builder enables you to:</p>
 <ul>
-    <li>Map Key Events (KEs) from AOP-Wiki to WikiPathways</li>
+    <li>Map Key Events (KEs) from AOP-Wiki to WikiPathways pathways</li>
     <li>Map Key Events to Gene Ontology Biological Process (GO BP) terms</li>
-    <li>Map Key Events to Reactome pathways (in active refinement)</li>
+    <li>Map Key Events to Reactome pathways</li>
     <li>Assess mapping confidence using a structured 4-question workflow</li>
     <li>Explore existing mappings created by the community, with coverage-gap analysis per AOP</li>
     <li>View a whole AOP as a graph, with per-resource coverage shown on each Key Event</li>
@@ -26,13 +34,13 @@ which uses them for KE-level enrichment of gene-expression data.</p>
     <li><strong>Login (optional)</strong> — sign in with GitHub to submit mappings or propose changes. Workshop participants can use a guest access code instead.</li>
     <li><strong>Navigate to Mapping</strong> — go to the main mapping interface</li>
     <li><strong>Select a Key Event</strong> — a details panel shows the KE description, biological level, and AOP-Wiki link; an inline AOP-context graph fans out from the KE; a context panel lists AOP membership and any existing WP/GO/Reactome mappings</li>
-    <li><strong>Select a target</strong> — pick a pathway or GO term from the <strong>KE-WP Mapping</strong>, <strong>KE-GO Mapping</strong>, or <strong>KE-Reactome Mapping</strong> tab (each offers Suggested / Search / Browse sub-tabs)</li>
+    <li><strong>Select a target</strong> — pick a pathway or a GO term from the <strong>KE-WikiPathways</strong>, <strong>KE-GO</strong>, or <strong>KE-Reactome</strong> tab (each offers Suggested / Search / Browse sub-tabs). The three are peers: start with whichever resource best describes the Key Event, and map it to more than one where more than one fits.</li>
     <li><strong>Complete Confidence Assessment</strong> — answer 4 questions to determine mapping quality</li>
     <li><strong>Submit Mapping</strong> — your submission enters the proposal queue and is published once an admin approves it</li>
 </ol>
 
 <div class="info-box">
-    <strong>Note:</strong> This application is part of the VHP4Safety project, integrating data from AOP-Wiki and WikiPathways to support toxicology research.
+    <strong>Note:</strong> This application is part of the VHP4Safety project, integrating data from AOP-Wiki, WikiPathways, Gene Ontology and Reactome to support toxicology research.
 </div>
 
 <h3>System Requirements</h3>

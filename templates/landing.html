@@ -4,7 +4,7 @@
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='images/MolAOPlogo.png') }}">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Molecular AOP Builder — Connecting Key Events to Molecular Pathways</title>
+    <title>Molecular AOP Builder — Connecting Key Events to Molecular Pathways and Processes</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
@@ -17,10 +17,11 @@
   <!-- 1. Hero -->
   <section class="landing__hero">
     <div class="landing__hero-inner">
-      <h1 class="landing__hero-title">Connecting Key Events to Molecular Pathways</h1>
+      <h1 class="landing__hero-title">Connecting Key Events to Molecular Pathways and Processes</h1>
       <p class="landing__hero-subtitle">
-        A curated, FAIR database linking AOP Key Events to WikiPathways, Gene Ontology,
-        and Reactome — enabling gene-set enrichment and mechanistic network analysis in toxicology.
+        A curated, FAIR database linking AOP Key Events to WikiPathways and Reactome
+        pathways and to Gene Ontology biological processes — enabling gene-set enrichment
+        and mechanistic network analysis in toxicology.
       </p>
     </div>
   </section>
@@ -100,7 +101,9 @@
           <span class="landing__how-step-num">2</span>
           <div>
             <strong>Review AI-ranked suggestions</strong>
-            BioBERT semantic similarity ranks candidate WikiPathways, GO terms, and Reactome pathways.
+            BioBERT semantic similarity ranks candidates across all three resources —
+            WikiPathways and Reactome for curated pathway models, Gene Ontology for the
+            underlying biological process.
           </div>
         </li>
         <li class="landing__how-step">

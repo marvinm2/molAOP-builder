@@ -217,7 +217,7 @@ All workflows run automatically on push to main branch and can be triggered manu
 7. **Access the application:**
    - Open: http://localhost:5000
    - Click "Login" and sign in with GitHub (or with whichever additional OAuth providers you have configured — see the `*_CLIENT_ID` env vars below)
-   - Start mapping KE-WP relationships!
+   - Start mapping Key Events to WikiPathways, GO terms or Reactome pathways!
 
 ### Run with Docker
 
@@ -283,8 +283,8 @@ tests/                  # Pytest test suite
 
 | Endpoint | Method | Description | Rate Limit |
 |----------|--------|-------------|------------|
-| `/check` | POST | Validate KE-WP pair existence | General |
-| `/submit` | POST | Create new KE-WP mapping | Submission |
+| `/check` | POST | Validate KE-WikiPathways pair existence | General |
+| `/submit` | POST | Create new KE-WikiPathways mapping | Submission |
 | `/get_ke_options` | GET | Fetch Key Event options | SPARQL |
 | `/get_pathway_options` | GET | Fetch pathway options | SPARQL |
 | `/get_aop_options` | GET | Fetch AOP options | SPARQL |
@@ -293,13 +293,41 @@ tests/                  # Pytest test suite
 | `/suggest_pathways/<ke_id>` | GET | Pathway suggestions for a Key Event | SPARQL |
 | `/search_pathways` | GET | Full-text pathway search with fuzzy matching | SPARQL |
 | `/ke_genes/<ke_id>` | GET | Genes associated with a Key Event | SPARQL |
-| `/api/ke_context/<ke_id>` | GET | KE context: AOPs, existing WP/GO mappings | General |
+| `/api/ke_context/<ke_id>` | GET | KE context: AOPs, existing WikiPathways/GO/Reactome mappings | General |
 | `/api/scoring-config` | GET | KE-WP assessment scoring configuration | General |
 | `/suggest_go_terms/<ke_id>` | GET | GO BP term suggestions for a Key Event | SPARQL |
 | `/submit_go_mapping` | POST | Create new KE-GO mapping | Submission |
 | `/check_go_entry` | POST | Check if KE-GO pair exists | General |
 | `/api/go-scoring-config` | GET | KE-GO assessment scoring configuration | General |
-| `/submit_proposal` | POST | Submit change proposal | Submission |
+| `/search_go_terms` | GET | Full-text GO term search across the whole BP namespace, or by GO ID | SPARQL |
+| `/suggest_reactome/<ke_id>` | GET | Reactome pathway suggestions for a Key Event | SPARQL |
+| `/search_reactome` | GET | Full-text Reactome pathway search | SPARQL |
+| `/submit_reactome_mapping` | POST | Create new KE-Reactome mapping | Submission |
+| `/check_reactome_entry` | POST | Check if KE-Reactome pair exists | General |
+| `/submit_proposal` | POST | Submit KE-WikiPathways change proposal | Submission |
+| `/submit_go_proposal` | POST | Submit KE-GO change proposal | Submission |
+| `/submit_reactome_proposal` | POST | Submit KE-Reactome change proposal | Submission |
+
+### Public REST API (`/api/v1`)
+
+Unauthenticated, 100 requests/hour/IP. This is the contract the
+[Molecular AOP Analyser](https://molaop-analyser.vhp4safety.nl) consumes; see
+[`/api/docs`](https://molaop-builder.vhp4safety.nl/api/docs) for the Swagger UI.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/mappings` | GET | Approved KE-WikiPathways mappings (paginated, filterable, JSON or CSV) |
+| `/api/v1/mappings/<uuid>` | GET | A single KE-WikiPathways mapping |
+| `/api/v1/go-mappings` | GET | Approved KE-GO mappings |
+| `/api/v1/go-mappings/<uuid>` | GET | A single KE-GO mapping |
+| `/api/v1/reactome-mappings` | GET | Approved KE-Reactome mappings |
+| `/api/v1/reactome-mappings/<uuid>` | GET | A single KE-Reactome mapping |
+| `/api/v1/aops` | GET | AOPs with titles, KE counts and per-resource mapping coverage |
+
+> `per_page` is clamped at **200**. Follow `pagination.total_pages` / `pagination.next`
+> to retrieve a full result set — a single request silently returns a partial one
+> (this is what broke the Explore table in
+> [#242](https://github.com/marvinm2/molAOP-builder/issues/242)).
 
 ### Admin Endpoints
 
