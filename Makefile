@@ -1,4 +1,4 @@
-.PHONY: help install test lint run docker-build docker-run clean capture-versions backfill-versions go-hierarchy go-corpus wp-corpus wp-annotations
+.PHONY: help install test lint run docker-build docker-run clean capture-versions backfill-versions go-hierarchy go-corpus wp-corpus wp-annotations ke-corpus ke-corpus-refresh
 
 help:		## Show this help
 	@echo "Available targets:"
@@ -48,6 +48,12 @@ wp-corpus:	## Rebuild + size-filter the WikiPathways suggestion corpus (annotati
 	python scripts/download_wikipathways_annotations.py
 	python scripts/precompute_pathway_title_embeddings.py
 	python scripts/precompute_pathway_embeddings.py
+
+ke-corpus:	## Rebuild the KE embeddings (title-only + with-description) from the existing ke_metadata.json snapshot
+	python scripts/precompute_ke_embeddings.py
+
+ke-corpus-refresh:	## As ke-corpus, but ALSO re-fetch Key Events from AOP-Wiki and rewrite ke_metadata.json (moves the KE snapshot)
+	python scripts/precompute_ke_embeddings.py --refresh-metadata
 
 wp-annotations:	## Refresh only data/wikipathways_gene_annotations.json (gene-set sizes shown in search/suggestions)
 	python scripts/download_wikipathways_annotations.py

@@ -8,6 +8,9 @@ Output:
     ke_embeddings.npz - NPZ file with 'ids' (Unicode) and 'matrix' (float32, normalized)
 """
 
+import argparse
+import json
+import os
 import re
 import logging
 import requests
@@ -81,37 +84,78 @@ def fetch_all_kes():
         raise
 
 
-def precompute_all_ke_embeddings(output_path='data/ke_embeddings.npz',
-                                  metadata_path='data/ke_metadata.json'):
+def load_kes_from_metadata(metadata_path):
+    """Rebuild the KE list from an existing ke_metadata.json.
+
+    Lets the embeddings be regenerated without re-fetching AOP-Wiki, so a
+    corpus rebuild does not silently move the Key Event snapshot underneath a
+    curation session (#225). The metadata file carries every field the
+    embedding text is built from.
     """
-    Fetch all Key Events and pre-compute their BioBERT embeddings.
-    Also saves ke_metadata.json for serving dropdown options without live SPARQL.
+    with open(metadata_path, 'r', encoding='utf-8') as fh:
+        metadata = json.load(fh)
+
+    return [
+        {
+            'ke_id': entry.get('KElabel'),
+            'ke_title': entry.get('KEtitle', ''),
+            'ke_description': entry.get('KEdescription', '') or '',
+            'biolevel': entry.get('biolevel', ''),
+            'ke_page': entry.get('KEpage', ''),
+        }
+        for entry in metadata
+        if entry.get('KElabel')
+    ]
+
+
+def precompute_all_ke_embeddings(output_path='data/ke_embeddings.npz',
+                                  metadata_path='data/ke_metadata.json',
+                                  refresh_metadata=False):
+    """
+    Pre-compute BioBERT embeddings for every Key Event.
 
     Generates three NPZ files:
     - data/ke_embeddings_title_only.npz  (title-only embeddings)
     - data/ke_embeddings_with_desc.npz   (title+description embeddings)
     - data/ke_embeddings.npz             (backward-compat copy of with_desc)
+
+    By default the Key Events are read from the existing ``metadata_path``, so
+    regenerating embeddings is a pure recompute. Pass ``refresh_metadata=True``
+    (CLI: ``--refresh-metadata``) to re-fetch from AOP-Wiki SPARQL and rewrite
+    ``ke_metadata.json`` as well.
+
+    That default is the point of the flag. This script used to always re-fetch
+    and rewrite the metadata, so "regenerate the embeddings" also advanced the
+    Key Event snapshot the curation UI serves — a side effect nobody asked for
+    and which #225 flagged. Moving the snapshot is a deliberate act now.
     """
     import shutil
 
     embedding_service = init_embedding_service()
 
-    # Fetch all Key Events
-    logger.info("Fetching all Key Events from AOP-Wiki...")
-    kes = fetch_all_kes()
-
-    # Save metadata in the format expected by /get_ke_options
-    metadata = [
-        {
-            'KElabel': ke['ke_id'],
-            'KEtitle': ke['ke_title'],
-            'KEdescription': ke['ke_description'],
-            'biolevel': ke['biolevel'],
-            'KEpage': ke['ke_page'],
-        }
-        for ke in kes
-    ]
-    save_metadata(metadata, metadata_path)
+    if refresh_metadata or not os.path.exists(metadata_path):
+        if refresh_metadata:
+            logger.info("Refreshing KE metadata from AOP-Wiki (--refresh-metadata)...")
+        else:
+            logger.info("No %s found — fetching from AOP-Wiki to create it.", metadata_path)
+        kes = fetch_all_kes()
+        metadata = [
+            {
+                'KElabel': ke['ke_id'],
+                'KEtitle': ke['ke_title'],
+                'KEdescription': ke['ke_description'],
+                'biolevel': ke['biolevel'],
+                'KEpage': ke['ke_page'],
+            }
+            for ke in kes
+        ]
+        save_metadata(metadata, metadata_path)
+    else:
+        kes = load_kes_from_metadata(metadata_path)
+        logger.info(
+            "Reusing the existing KE snapshot in %s (%d Key Events) — pass "
+            "--refresh-metadata to re-fetch from AOP-Wiki.", metadata_path, len(kes)
+        )
 
     # Build two dicts: title-only and title+description
     title_only_items = {}
@@ -156,4 +200,17 @@ def precompute_all_ke_embeddings(output_path='data/ke_embeddings.npz',
 
 
 if __name__ == '__main__':
-    precompute_all_ke_embeddings()
+    parser = argparse.ArgumentParser(
+        description="Pre-compute BioBERT embeddings for AOP-Wiki Key Events."
+    )
+    parser.add_argument(
+        '--refresh-metadata',
+        action='store_true',
+        help=(
+            "Re-fetch Key Events from AOP-Wiki and rewrite ke_metadata.json. "
+            "Off by default: regenerating embeddings should not move the Key "
+            "Event snapshot the curation UI serves."
+        ),
+    )
+    args = parser.parse_args()
+    precompute_all_ke_embeddings(refresh_metadata=args.refresh_metadata)

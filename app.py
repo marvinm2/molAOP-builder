@@ -14,6 +14,7 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_limiter.errors import RateLimitExceeded
 
+from src import __version__, get_build_ref
 from src.utils.timezone import format_admin_timestamp
 from src.utils.text import sanitize_log
 
@@ -350,7 +351,8 @@ def create_app(config_name: str = None):
                 {
                     "status": "healthy" if all(health_status.values()) else "degraded",
                     "timestamp": format_admin_timestamp(),
-                    "version": "2.7.0",
+                    "version": __version__,
+                    "build": get_build_ref(),
                     "services": health_status,
                 }
             )

@@ -13,6 +13,12 @@ RUN pip install --no-cache-dir --prefix=/install \
 # --- Runtime stage ---
 FROM python:3.12-slim-bookworm
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 FLASK_APP=app.py FLASK_ENV=production
+# Commit this image was built from, surfaced by /health as "build". A semantic
+# version cannot tell two deployments of the same release apart, which is what
+# "is the latest code live?" actually asks. Unset outside CI, and /health then
+# reports "unknown" rather than inventing a value.
+ARG GIT_SHA=""
+ENV GIT_SHA=$GIT_SHA
 WORKDIR /app
 # sqlite3 is the backup script's engine (Online Backup API). No cron package:
 # the container runs a single gunicorn process as a non-root user, so it cannot
