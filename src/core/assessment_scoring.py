@@ -154,3 +154,48 @@ def recompute_confidence_level(
             biolevel,
         )
     return computed
+
+
+# ---------------------------------------------------------------------------
+# KE-GO: a different instrument, scored the same way twice
+# ---------------------------------------------------------------------------
+#
+# KE-GO does not use the four questions above. It scores three dimensions —
+# connection, specificity, evidence — each High/Medium/Low = 3/2/1, and takes a
+# weighted average against its own thresholds, with no biological-level bonus.
+# The two instruments are not interchangeable and their thresholds differ
+# (5.0/2.5 additive here, 2.5/1.5 averaged there).
+#
+# This lives beside the KE-WP scorer because it has the same job and the same
+# hazard: the reviewer panel and the submitter form each carry a copy of the
+# arithmetic in JavaScript, reconciled through /api/go-scoring-config, and the
+# server now has writers in two blueprints. One definition, three readers.
+
+
+def compute_go_confidence(
+    connection_score: Optional[int],
+    specificity_score: Optional[int],
+    evidence_score: Optional[int],
+    config: Any,
+) -> Optional[str]:
+    """Return the KE-GO tier for three dimension scores, or None if incomplete.
+
+    Returning None rather than defaulting to ``low`` keeps "not scored" separable
+    from "scored badly" — a distinction the WP scorer also makes, and for the
+    same reason: a missing answer must never be silently read as a weak one.
+    """
+    if None in (connection_score, specificity_score, evidence_score):
+        return UNSCORABLE
+
+    weights = config.dimension_weights
+    weighted_avg = (
+        connection_score * weights["connection"]
+        + specificity_score * weights["specificity"]
+        + evidence_score * weights["evidence"]
+    )
+    thresholds = config.dimension_thresholds
+    if weighted_avg >= thresholds["high"]:
+        return "high"
+    if weighted_avg >= thresholds["medium"]:
+        return "medium"
+    return "low"

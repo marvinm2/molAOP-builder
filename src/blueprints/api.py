@@ -27,7 +27,10 @@ from src.core.schemas import (
     SecurityValidation,
     validate_request_data,
 )
-from src.core.assessment_scoring import recompute_confidence_level
+from src.core.assessment_scoring import (
+    compute_go_confidence,
+    recompute_confidence_level,
+)
 from src.services.corpus_versions import corpus_version
 from src.core.config_loader import ConfigLoader
 from src.services import source_versions
@@ -113,6 +116,27 @@ def _recompute_wp_confidence(ke_id, basis, specificity, coverage, submitted_leve
             sanitize_log(ke_id), exc, submitted_level,
         )
         return submitted_level
+
+
+def _compute_go_confidence(connection_score, specificity_score, evidence_score):
+    """Score a KE-GO revision's three dimensions and return the tier to store.
+
+    Sibling of ``_recompute_wp_confidence`` for GO's own instrument. Unlike the
+    KE-WP scorer this needs no biological level, so the only way it returns None
+    is an incomplete assessment — which the route rejects before reaching here.
+    A scoring failure falls back to no tier rather than a guessed one; the
+    approve path leaves the column untouched on None.
+    """
+    try:
+        return compute_go_confidence(
+            connection_score,
+            specificity_score,
+            evidence_score,
+            ConfigLoader.load_config().ke_go_assessment,
+        )
+    except Exception as exc:
+        logger.error("KE-GO confidence scoring failed (%s); storing no tier", exc)
+        return None
 
 
 def login_required(f):
@@ -619,6 +643,12 @@ def submit_proposal():
     Handles proposal submission from the explore page modal form.
     Proposals are stored in the database with status 'pending' for admin review.
 
+    #245: a revision carries the same four assessment answers as a creation and
+    the confidence tier is derived from them here, exactly as /submit does.
+    There is no longer a direct High/Medium/Low control — a revision was the one
+    path that could move a mapping between tiers with no recorded reasoning, on
+    the mappings least well understood in the first place.
+
     Returns:
         JSON response with success/error message
     """
@@ -630,9 +660,15 @@ def submit_proposal():
             "userEmail": request.form.get("userEmail"),
             "userAffiliation": request.form.get("userAffiliation"),
             "deleteEntry": request.form.get("deleteEntry", ""),
-            "changeConfidence": request.form.get("changeConfidence", ""),
-            "changeType": request.form.get("changeType", ""),
         }
+        # An unanswered question arrives as "" from an unchecked radio group.
+        # Omit those so Marshmallow's optional-field semantics fire, rather than
+        # failing OneOf on the empty string — a deletion proposal legitimately
+        # answers none of the four.
+        for key in ("step1", "step2", "step3", "step4"):
+            value = request.form.get(key)
+            if value:
+                proposal_data[key] = value
 
         # Debug logging
         logger.info("Proposal submission data: %s", sanitize_log(str(proposal_data)))
@@ -656,8 +692,42 @@ def submit_proposal():
 
         # Extract proposed changes
         proposed_delete = validated_data["deleteEntry"] == "on"
-        proposed_confidence = validated_data.get("changeConfidence") or None
-        proposed_connection_type = validated_data.get("changeType") or None
+
+        # #245: the assessment answers, renamed to the DB column names exactly
+        # as /submit does. A deletion proposes no assessment; anything else must
+        # carry the full four, since a partially answered revision would store a
+        # tier derived from a score the curator never completed.
+        def _answer(key):
+            value = validated_data.get(key)
+            # Already whitelisted by OneOf; sanitize_string is defence in depth,
+            # matching /submit.
+            return SecurityValidation.sanitize_string(value) if value else None
+
+        proposed_relationship = _answer("step1")
+        proposed_basis = _answer("step2")
+        proposed_specificity = _answer("step3")
+        proposed_coverage = _answer("step4")
+        answers = (
+            proposed_relationship, proposed_basis,
+            proposed_specificity, proposed_coverage,
+        )
+
+        if not proposed_delete:
+            if not all(answers):
+                return (
+                    jsonify({
+                        "error": "A revision must answer all four assessment "
+                                 "questions, or propose a deletion.",
+                    }),
+                    400,
+                )
+        elif any(answers):
+            # A deletion makes no assertion about confidence; accepting answers
+            # alongside it would store reasoning for a mapping about to vanish.
+            return (
+                jsonify({"error": "A deletion proposal carries no assessment."}),
+                400,
+            )
 
         # Additional email domain validation
         if not SecurityValidation.validate_email_domain(user_email):
@@ -692,6 +762,39 @@ def submit_proposal():
         # Get current user
         provider_username = session.get("user", {}).get("username", "unknown")
 
+        # #245: derive the tier from the answers rather than accepting one, so
+        # there is a single instrument for setting confidence.
+        proposed_confidence = None
+        if not proposed_delete:
+            proposed_confidence = _recompute_wp_confidence(
+                ke_id=ke_id,
+                basis=proposed_basis,
+                specificity=proposed_specificity,
+                coverage=proposed_coverage,
+                submitted_level=None,
+            )
+            if not proposed_confidence:
+                # Scoring returns nothing when the Key Event is absent from the
+                # metadata snapshot, which happens whenever the snapshot lags
+                # AOP-Wiki (#239). On the new-pair path the browser's own tier
+                # stands in; a revision has no submitted tier to fall back to,
+                # so storing the assessment anyway would record four answers
+                # against a tier that never moves. Refuse, and say why.
+                logger.warning(
+                    "Refusing revision for %s: confidence not derivable "
+                    "(KE missing from the metadata snapshot?)",
+                    sanitize_log(ke_id),
+                )
+                return (
+                    jsonify({
+                        "error": "Could not derive a confidence level for this "
+                                 "Key Event. Its biological level is missing "
+                                 "from the current snapshot, so the assessment "
+                                 "cannot be scored.",
+                    }),
+                    409,
+                )
+
         # Create proposal in database
         proposal_id = proposal_model.create_proposal(
             mapping_id=mapping_id,
@@ -700,10 +803,11 @@ def submit_proposal():
             user_affiliation=user_affiliation,
             provider_username=provider_username,
             proposed_delete=proposed_delete,
-            proposed_confidence=proposed_confidence if proposed_confidence else None,
-            proposed_connection_type=proposed_connection_type
-            if proposed_connection_type
-            else None,
+            proposed_confidence=proposed_confidence,
+            proposed_relationship=proposed_relationship,
+            proposed_basis=proposed_basis,
+            proposed_specificity=proposed_specificity,
+            proposed_coverage=proposed_coverage,
         )
 
         if proposal_id:
@@ -757,6 +861,11 @@ def submit_go_proposal():
     Feeds the /admin/go-proposals review queue so corrections to approved GO
     mappings stay inside the auditable proposal workflow (issue #197), matching
     the WikiPathways "Propose Change" action.
+
+    #245: a revision asks what creating a GO mapping asks — a connection type
+    plus the three dimension scores — and the tier is derived from them. GO's
+    instrument differs from KE-WP's four questions; what is shared is that a
+    correction states its grounds rather than asserting a tier.
     """
     try:
         proposal_data = {
@@ -765,9 +874,14 @@ def submit_go_proposal():
             "userEmail": request.form.get("userEmail"),
             "userAffiliation": request.form.get("userAffiliation"),
             "deleteEntry": request.form.get("deleteEntry", ""),
-            "changeConfidence": request.form.get("changeConfidence", ""),
             "changeType": request.form.get("changeType", ""),
         }
+        # Omit unanswered dimensions rather than sending "" — a deletion
+        # proposal legitimately scores none of the three.
+        for key in ("connection_score", "specificity_score", "evidence_score"):
+            value = request.form.get(key)
+            if value:
+                proposal_data[key] = value
 
         is_valid, validated_data, errors = validate_request_data(
             GoProposalChangeSchema, proposal_data
@@ -783,11 +897,37 @@ def submit_go_proposal():
             validated_data["userAffiliation"]
         )
         proposed_delete = validated_data["deleteEntry"] == "on"
-        proposed_confidence = validated_data.get("changeConfidence") or None
         proposed_connection_type = validated_data.get("changeType") or None
+        connection_score = validated_data.get("connection_score")
+        specificity_score = validated_data.get("specificity_score")
+        evidence_score = validated_data.get("evidence_score")
+        dimensions = (connection_score, specificity_score, evidence_score)
 
-        if not (proposed_delete or proposed_confidence or proposed_connection_type):
-            return jsonify({"error": "No changes specified."}), 400
+        # #245: same shape as the KE-WP revision path. A revision states its
+        # grounds in full or it is not a reviewable revision; a deletion states
+        # nothing, because it asserts nothing about confidence.
+        if not proposed_delete:
+            if not all(d is not None for d in dimensions) or not proposed_connection_type:
+                return (
+                    jsonify({
+                        "error": "A revision must give a connection type and "
+                                 "score all three dimensions, or propose a "
+                                 "deletion.",
+                    }),
+                    400,
+                )
+        elif any(d is not None for d in dimensions) or proposed_connection_type:
+            return (
+                jsonify({"error": "A deletion proposal carries no assessment."}),
+                400,
+            )
+
+        # Derive the tier from the dimensions rather than accepting one, so GO
+        # has a single instrument for setting confidence. Unlike the KE-WP
+        # scorer this needs no biological level, so it cannot fail to resolve.
+        proposed_confidence = None
+        if not proposed_delete:
+            proposed_confidence = _compute_go_confidence(*dimensions)
 
         if not SecurityValidation.validate_email_domain(user_email):
             return jsonify({"error": "Invalid email domain."}), 400
@@ -822,6 +962,9 @@ def submit_go_proposal():
             ke_title=entry_dict.get("ke_title"),
             go_id=go_id,
             go_name=entry_dict.get("go_name"),
+            proposed_connection_score=connection_score,
+            proposed_specificity_score=specificity_score,
+            proposed_evidence_score=evidence_score,
         )
 
         if proposal_id:

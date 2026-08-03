@@ -126,14 +126,26 @@ class TestSubmitGoProposal:
         assert props[0]["ke_id"] == "KE 177"
 
     def test_confidence_change_proposal_created(self, client_models):
+        """#245 replaced the bare confidence radio with GO's own instrument.
+
+        A revision now scores the three dimensions and the tier is derived from
+        them, so the tier is an outcome of stated reasoning rather than an
+        assertion. 1/1/1 is the weakest assessment and yields 'low' — the value
+        this test used to set directly.
+        """
         c, gm, gpm = client_models
         _seed_go_mapping(gm)
         entry = _entry(ke_id="KE 177", go_id="GO:0140053")
         resp = c.post("/submit_go_proposal",
-                      data=self._base_form(entry, changeConfidence="low"))
+                      data=self._base_form(
+                          entry, changeType="describes",
+                          connection_score=1, specificity_score=1,
+                          evidence_score=1,
+                      ))
         assert resp.status_code == 200
         props = gpm.get_all_go_proposals()
         assert props[0]["proposed_confidence"] == "low"
+        assert props[0]["proposed_connection_score"] == 1
 
     def test_unknown_mapping_returns_404(self, client_models):
         c, gm, gpm = client_models
