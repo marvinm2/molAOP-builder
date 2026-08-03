@@ -61,6 +61,22 @@ var AdminProposals = (function () {
         { key: 'proposed_evidence_score', label: 'Evidence (literature support)', dim: 'evidence' }
     ];
 
+    // #246: the four-question instrument as an editable description, mirroring
+    // goDimensions above. WikiPathways and Reactome share it; GO has its own.
+    // Both are now rendered by one editor parameterised on the resource rather
+    // than a GO-only special case — three near-identical panels is how the GO
+    // and WP paths drifted apart to begin with.
+    var stepQuestions = [
+        { key: 'proposed_relationship', field: 'step1', label: 'Relationship' },
+        { key: 'proposed_basis', field: 'step2', label: 'Basis' },
+        { key: 'proposed_specificity', field: 'step3', label: 'Specificity' },
+        { key: 'proposed_coverage', field: 'step4', label: 'Coverage' }
+    ];
+
+    function _usesStepAssessment() {
+        return _config && (_config.resource === 'wp' || _config.resource === 'reactome');
+    }
+
     var GO_CONNECTION_TYPES = ['describes', 'involves', 'related', 'context'];
     var GO_CONNECTION_HINTS = {
         describes: 'the GO term directly describes the KE mechanism',
@@ -265,6 +281,27 @@ var AdminProposals = (function () {
         }
     }
 
+    function _currentAssessmentFromRow($row) {
+        var version = $row.data('current-version') || null;
+        var confidence = $row.data('current-confidence') || null;
+        var answers = {
+            proposed_relationship: $row.data('current-relationship') || null,
+            proposed_basis: $row.data('current-basis') || null,
+            proposed_specificity: $row.data('current-specificity') || null,
+            proposed_coverage: $row.data('current-coverage') || null
+        };
+        // A new-pair proposal has no target mapping, so every one of these is
+        // absent. Distinguish that from a mapping that exists but predates the
+        // assessment, which has a version and a tier but no answers.
+        if (!version && !confidence &&
+            !Object.keys(answers).some(function (k) { return _hasValue(answers[k]); })) {
+            return null;
+        }
+        answers.confidence_level = confidence;
+        answers.assessment_version = version;
+        return answers;
+    }
+
     function _rowToProposal($row) {
         return {
             id: parseInt($row.data('proposal-id'), 10),
@@ -279,6 +316,11 @@ var AdminProposals = (function () {
             proposed_basis: $row.data('proposed-basis') || null,
             proposed_specificity: $row.data('proposed-specificity') || null,
             proposed_coverage: $row.data('proposed-coverage') || null,
+            // #247: the assessment this revision replaces. Null throughout for a
+            // new-pair proposal, which has no current state — the panel then
+            // shows the proposed answers alone rather than an empty column
+            // implying something was lost.
+            current_assessment: _currentAssessmentFromRow($row),
             // Issue #213: GO's three-dimension assessment. Absent on the WP and
             // Reactome queues, where these stay null and the four-answer block
             // above is rendered instead.
@@ -412,6 +454,126 @@ var AdminProposals = (function () {
             '</div>';
     }
 
+    // -------------------------------------------------------------------------
+    // Editable four-question assessment (WikiPathways + Reactome)
+    // -------------------------------------------------------------------------
+
+    function _seedStepEdit(p) {
+        var submitted = {};
+        stepQuestions.forEach(function (q) { submitted[q.key] = p[q.key] || ''; });
+        submitted.confidence = p.proposed_confidence || p.new_pair_confidence_level || p.confidence || '';
+        _edit = {
+            submitted: submitted,
+            current: $.extend({}, submitted),
+            confidenceOverride: ''
+        };
+        delete _edit.current.confidence;
+    }
+
+    function _stepEditIsDirty() {
+        if (!_edit) return false;
+        var dirty = stepQuestions.some(function (q) {
+            return _edit.current[q.key] !== _edit.submitted[q.key];
+        });
+        return dirty || (!!_edit.confidenceOverride &&
+                         _edit.confidenceOverride !== _edit.submitted.confidence);
+    }
+
+    function _renderStepAssessmentEditor(p) {
+        _seedStepEdit(p);
+        var current = (p.current_assessment || null);
+        // A mapping that predates the assessment has a tier but no answers.
+        // Four "was: —" lines read as "no answers given" when the truth is that
+        // answers were never collectable, and a revision against one of those is
+        // precisely where a reviewer most needs to be told (#247).
+        var currentIsLegacy = !!current && !stepQuestions.some(function (q) {
+            return _hasValue(current[q.key]);
+        });
+        if (currentIsLegacy) current = null;
+
+        var rows = stepQuestions.map(function (q) {
+            var labels = stepLabels[q.field];
+            var options = Object.keys(labels).map(function (v) {
+                return '<option value="' + v + '"' +
+                    (_edit.current[q.key] === v ? ' selected' : '') + '>' +
+                    escapeHtml(labels[v]) + '</option>';
+            }).join('');
+            // #247: what this answer replaces, and whether it actually moved.
+            var was = current ? current[q.key] : null;
+            var note = '';
+            if (current) {
+                if (!_hasValue(was)) {
+                    note = '<span style="font-size:11px;color:var(--color-text-muted,#6c757d);">was: —</span>';
+                } else if (was !== _edit.current[q.key]) {
+                    note = '<span class="assessment-changed" style="font-size:11px;color:#7a4b00;font-weight:600;">' +
+                           'changed from ' + escapeHtml(labels[was] || was) + '</span>';
+                } else {
+                    note = '<span style="font-size:11px;color:var(--color-text-muted,#6c757d);">unchanged</span>';
+                }
+            }
+            return '<div style="margin-bottom:8px;">' +
+                '<label for="stepReview_' + q.field + '" style="display:block;font-size:13px;font-weight:600;margin-bottom:2px;">' +
+                escapeHtml(q.label) + '</label>' +
+                '<select id="stepReview_' + q.field + '" class="step-review-select" data-key="' + q.key + '"' +
+                ' style="width:100%;font-size:13px;padding:4px;border:1px solid var(--color-border-light,#dee2e6);border-radius:4px;">' +
+                '<option value="">—</option>' + options + '</select>' +
+                (note ? '<div style="margin-top:2px;">' + note + '</div>' : '') +
+                '</div>';
+        }).join('');
+
+        var confOptions = ['', 'high', 'medium', 'low'].map(function (v) {
+            var label = v === '' ? 'Auto (calculated on approval)' : v;
+            return '<option value="' + v + '"' + (_edit.confidenceOverride === v ? ' selected' : '') + '>' +
+                   escapeHtml(label) + '</option>';
+        }).join('');
+
+        // Deliberately no live tier here, unlike GO. The KE-WP score depends on
+        // the Key Event's biological level, which this panel does not hold and
+        // which the browser getting wrong is exactly what #237 was about. The
+        // server recomputes on approval from its own metadata; a reviewer who
+        // wants a specific tier pins it explicitly instead.
+        var currentTier = current && current.confidence_level
+            ? '<span style="font-size:12px;color:var(--color-text-muted,#6c757d);">currently ' +
+              escapeHtml(current.confidence_level) + '</span>'
+            : '';
+
+        var legacyNote = currentIsLegacy
+            ? '<div style="margin-bottom:8px;font-size:12px;color:var(--color-text-muted,#6c757d);">' +
+              'The mapping being revised predates the assessment, so there are no ' +
+              'current answers to compare against.</div>'
+            : '';
+
+        return '<div id="stepReviewEditor">' + legacyNote + rows +
+            '<div style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
+            '<label for="stepReviewConfidence" style="font-size:13px;font-weight:600;">Confidence</label>' +
+            '<select id="stepReviewConfidence" style="flex:1;min-width:150px;font-size:13px;padding:4px;border:1px solid var(--color-border-light,#dee2e6);border-radius:4px;">' +
+            confOptions + '</select>' + currentTier +
+            '</div>' +
+            '<div id="stepReviewDirty" style="margin-top:8px;font-size:12px;display:none;">' +
+            '<span style="color:#7a4b00;">Edited — approving records your values, not the submitter\'s.</span> ' +
+            '<button type="button" id="stepReviewReset" style="font-size:12px;padding:2px 8px;cursor:pointer;">Reset</button>' +
+            '</div></div>';
+    }
+
+    function _refreshStepDirty() {
+        var el = document.getElementById('stepReviewDirty');
+        if (el) el.style.display = _stepEditIsDirty() ? 'block' : 'none';
+    }
+
+    function _initStepReviewEditor() {
+        $(document).on('change', '#stepReviewEditor .step-review-select', function () {
+            if (!_edit) return;
+            _edit.current[this.getAttribute('data-key')] = this.value;
+            _refreshStepDirty();
+        });
+        $(document).on('change', '#stepReviewConfidence', function () {
+            if (_edit) { _edit.confidenceOverride = this.value; _refreshStepDirty(); }
+        });
+        $(document).on('click', '#stepReviewReset', function () {
+            if (_currentProposalId !== null) _setCurrentProposal(_currentProposalId);
+        });
+    }
+
     function _refreshComputedConfidence() {
         if (!_edit) return;
         var el = document.getElementById('goReviewComputed');
@@ -503,6 +665,14 @@ var AdminProposals = (function () {
                 // dimension, the connection type or the resulting tier can correct it
                 // here instead of rejecting the proposal and asking for a resubmit.
                 body = _renderGoAssessmentEditor(p);
+            } else if (isPending && _usesStepAssessment() && !_isDeletionProposal(p)) {
+                // #246: the same affordance for WikiPathways and Reactome, and
+                // for new-pair proposals as much as revisions. Rendered even
+                // when the proposal carries no answers — a legacy one is
+                // precisely where a reviewer most needs to be able to supply
+                // them, and #247's comparison says so rather than showing four
+                // blanks that read as "no answers given".
+                body = _renderStepAssessmentEditor(p);
             } else if (hasGoAssessment) {
                 body = goDimensions.map(function (d) {
                     var raw = p[d.key];
@@ -665,6 +835,22 @@ var AdminProposals = (function () {
             if (c.connection_type) formData.append('connection_type', c.connection_type);
             // Only send a confidence when the reviewer pinned one; otherwise let the
             // server compute it from the scores, so the two never disagree.
+            if (_edit.confidenceOverride) formData.append('confidence_level', _edit.confidenceOverride);
+        }
+
+        // #246: the same for the four-question resources. All four go together
+        // or none do — the server refuses a partial assessment rather than
+        // filling the gaps from the submitter's, which would attribute answers
+        // to a reviewer who never gave them.
+        if (_edit && _usesStepAssessment() && document.getElementById('stepReviewEditor')) {
+            var answered = stepQuestions.every(function (q) {
+                return _hasValue(_edit.current[q.key]);
+            });
+            if (answered) {
+                stepQuestions.forEach(function (q) {
+                    formData.append(q.field, _edit.current[q.key]);
+                });
+            }
             if (_edit.confidenceOverride) formData.append('confidence_level', _edit.confidenceOverride);
         }
 
@@ -871,6 +1057,8 @@ var AdminProposals = (function () {
                 if (config.resource === 'go') {
                     _initGoReviewEditor();
                     _loadGoScoringConfig();
+                } else if (_usesStepAssessment()) {
+                    _initStepReviewEditor();
                 }
 
                 // Wire bulk approve button

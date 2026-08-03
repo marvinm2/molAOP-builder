@@ -92,6 +92,13 @@
                                 data-proposed-basis="{{ proposal.proposed_basis|e if proposal.proposed_basis else '' }}"
                                 data-proposed-specificity="{{ proposal.proposed_specificity|e if proposal.proposed_specificity else '' }}"
                                 data-proposed-coverage="{{ proposal.proposed_coverage|e if proposal.proposed_coverage else '' }}"
+                                {# #247: what a revision replaces, so the panel can mark what moved. #}
+                                data-current-relationship="{{ proposal.current_relationship|e if proposal.current_relationship else '' }}"
+                                data-current-basis="{{ proposal.current_basis|e if proposal.current_basis else '' }}"
+                                data-current-specificity="{{ proposal.current_specificity|e if proposal.current_specificity else '' }}"
+                                data-current-coverage="{{ proposal.current_coverage|e if proposal.current_coverage else '' }}"
+                                data-current-confidence="{{ proposal.current_confidence_level|e if proposal.current_confidence_level else '' }}"
+                                data-current-version="{{ proposal.current_assessment_version|e if proposal.current_assessment_version else '' }}"
                                 data-suggestion-score="{{ proposal.suggestion_score|e if proposal.suggestion_score else '' }}"
                                 data-submitted-by="{{ (proposal.github_username or proposal.user_name)|e }}"
                                 data-created-at="{{ (proposal.created_at_formatted or proposal.created_at)|e }}"
