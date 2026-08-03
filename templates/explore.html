@@ -126,7 +126,11 @@
                                     data-go-id="{{ row['go_id']|e }}"
                                     data-go-name="{{ row['go_name']|e }}"
                                     data-connection-type="{{ row['connection_type']|e }}"
-                                    data-confidence="{{ row['confidence_level']|e }}">Propose Change</button>
+                                    data-confidence="{{ row['confidence_level']|e }}"
+                                    {# #245: the modal shows the assessment a revision is changing. #}
+                                    data-connection-score="{{ row['connection_score'] if row['connection_score'] is not none else '' }}"
+                                    data-specificity-score="{{ row['specificity_score'] if row['specificity_score'] is not none else '' }}"
+                                    data-evidence-score="{{ row['evidence_score'] if row['evidence_score'] is not none else '' }}">Propose Change</button>
                         </td>
                     </tr>
                     {% endfor %}
@@ -200,23 +204,20 @@
                 <input type="checkbox" id="deleteEntry" name="proposedChange" value="delete">
                 <label for="deleteEntry">Recommend deletion of this mapping entry</label>
             </div>
-            <div id="confidenceBlock">
-                <label><strong>Update Confidence Level:</strong></label><br>
-                <input type="radio" id="confidenceHigh" name="changeConfidence" value="high">
-                <label for="confidenceHigh">High Confidence</label><br>
-                <input type="radio" id="confidenceMedium" name="changeConfidence" value="medium">
-                <label for="confidenceMedium">Medium Confidence</label><br>
-                <input type="radio" id="confidenceLow" name="changeConfidence" value="low">
-                <label for="confidenceLow">Low Confidence</label>
-            </div>
-            <div id="connectionTypeBlock">
-                <label><strong>Update Connection Type:</strong></label><br>
-                <input type="radio" id="typeCausative" name="changeType" value="causative">
-                <label for="typeCausative">Causative (Pathway causes KE)</label><br>
-                <input type="radio" id="typeResponsive" name="changeType" value="responsive">
-                <label for="typeResponsive">Responsive (Pathway responds to KE)</label><br>
-                <input type="radio" id="typeUndefined" name="changeType" value="undefined">
-                <label for="typeUndefined">Undefined relationship</label>
+
+            <!-- #245: a revision answers the same assessment that created the
+                 mapping, and the confidence tier is derived from it server-side.
+                 The old direct High/Medium/Low radio is gone — it was the one
+                 control that could move a mapping between tiers with no recorded
+                 reasoning. Questions are rendered per resource by
+                 renderAssessment(); WikiPathways and GO use different
+                 instruments and the markup must not pretend otherwise. -->
+            <div id="assessmentBlock">
+                <div id="currentAssessment" class="current-assessment"></div>
+                <div id="assessmentQuestions"></div>
+                <p id="assessmentHint" class="text-muted" style="font-size: 0.85em; margin-top: 8px;">
+                    The confidence level is calculated from these answers.
+                </p>
             </div>
 
             <div style="text-align: right;">
@@ -722,6 +723,139 @@
                 applyReactomeFilters();
             });
 
+            // #245: a revision asks the same assessment that created the
+            // mapping, per resource. WikiPathways scores four questions with a
+            // biological-level bonus; GO scores three weighted dimensions plus
+            // its own connection vocabulary. They are different instruments and
+            // are described separately rather than forced into one shape.
+            var ASSESSMENT_QUESTIONS = {
+                wp: [
+                    { name: 'step1', label: 'Relationship', options: [
+                        ['causative', 'Causative'],
+                        ['responsive', 'Responsive'],
+                        ['bidirectional', 'Bidirectional'],
+                        ['unclear', 'Unclear']
+                    ]},
+                    { name: 'step2', label: 'Basis', options: [
+                        ['known', 'Known connection'],
+                        ['likely', 'Likely connection'],
+                        ['possible', 'Possible connection'],
+                        ['uncertain', 'Uncertain connection']
+                    ]},
+                    { name: 'step3', label: 'Specificity', options: [
+                        ['specific', 'KE-specific'],
+                        ['includes', 'Includes KE'],
+                        ['loose', 'Loosely related']
+                    ]},
+                    { name: 'step4', label: 'Coverage', options: [
+                        ['complete', 'Complete mechanism'],
+                        ['keysteps', 'Key steps only'],
+                        ['minor', 'Minor aspects']
+                    ]}
+                ],
+                go: [
+                    { name: 'changeType', label: 'Connection type', options: [
+                        ['describes', 'Describes — the GO term directly describes the KE mechanism'],
+                        ['involves', 'Involves — the KE involves this process'],
+                        ['related', 'Related — a related process'],
+                        ['context', 'Context — provides context']
+                    ]},
+                    { name: 'connection_score', label: 'Connection (biological relevance)', options: [
+                        ['3', 'High'], ['2', 'Medium'], ['1', 'Low']
+                    ]},
+                    { name: 'specificity_score', label: 'Specificity (term precision)', options: [
+                        ['3', 'High'], ['2', 'Medium'], ['1', 'Low']
+                    ]},
+                    { name: 'evidence_score', label: 'Evidence (literature support)', options: [
+                        ['3', 'High'], ['2', 'Medium'], ['1', 'Low']
+                    ]}
+                ]
+            };
+
+            // The answers currently stored on the mapping, keyed to match the
+            // question names above so the modal can show what is being changed.
+            // The proposer could not see this before — the entry dump does not
+            // include the assessment at all.
+            function currentAnswers(entry, mappingType) {
+                if (mappingType === 'wp') {
+                    var a = entry.assessment || {};
+                    return {
+                        step1: a.relationship, step2: a.basis,
+                        step3: a.specificity, step4: a.coverage
+                    };
+                }
+                if (mappingType === 'go') {
+                    return {
+                        changeType: entry.connection_type,
+                        connection_score: entry.connection_score,
+                        specificity_score: entry.specificity_score,
+                        evidence_score: entry.evidence_score
+                    };
+                }
+                return {};
+            }
+
+            function renderAssessment(entry, mappingType) {
+                var questions = ASSESSMENT_QUESTIONS[mappingType] || [];
+                var current = currentAnswers(entry, mappingType);
+                var $questions = $('#assessmentQuestions').empty();
+                var $current = $('#currentAssessment').empty();
+
+                if (!questions.length) { return; }
+
+                // A mapping approved before the assessment existed has nothing
+                // stored. Say so, rather than rendering blanks that read as
+                // "no answers given" when the truth is "answers were never
+                // collectable".
+                var hasCurrent = questions.some(function (q) {
+                    return current[q.name] !== undefined && current[q.name] !== null && current[q.name] !== '';
+                });
+                $current.append(
+                    hasCurrent
+                        ? $('<p>').html('<strong>Current assessment</strong> — shown beside each question below.')
+                        : $('<p>').addClass('text-muted').text(
+                            'This mapping predates the assessment, so there are no current answers to compare against.')
+                );
+
+                questions.forEach(function (q) {
+                    var $group = $('<div>').addClass('assessment-question').css('margin-bottom', '10px');
+                    var $label = $('<label>').append($('<strong>').text(q.label));
+                    var stored = current[q.name];
+                    if (stored !== undefined && stored !== null && stored !== '') {
+                        var storedLabel = (q.options.filter(function (o) {
+                            return String(o[0]) === String(stored);
+                        })[0] || [null, stored])[1];
+                        $label.append(
+                            $('<span>').addClass('text-muted')
+                                       .css({ 'font-weight': 'normal', 'margin-left': '6px' })
+                                       .text('(currently: ' + storedLabel + ')')
+                        );
+                    }
+                    $group.append($label).append('<br>');
+
+                    q.options.forEach(function (opt) {
+                        var id = 'assess_' + q.name + '_' + opt[0];
+                        $group
+                            .append($('<input>').attr({ type: 'radio', id: id, name: q.name, value: opt[0] }))
+                            .append($('<label>').attr('for', id).text(' ' + opt[1]))
+                            .append('<br>');
+                    });
+                    $questions.append($group);
+                });
+            }
+
+            // A deletion asserts nothing about confidence, so it answers
+            // nothing — and the server rejects answers submitted alongside one.
+            function syncDeletionState() {
+                var deleting = $('#deleteEntry').is(':checked');
+                $('#assessmentBlock').toggle(!deleting && $('#assessmentQuestions').children().length > 0);
+                if (deleting) {
+                    $('#assessmentQuestions input[type="radio"]').prop('checked', false);
+                }
+            }
+
+            $(document).on('change', '#deleteEntry', syncDeletionState);
+
             // Propose Change modal — shared opener across all three mapping
             // types (wp | go | reactome). mappingType routes the submission to
             // the matching endpoint and toggles resource-specific fields.
@@ -730,16 +864,12 @@
                 if (formEl) { formEl.reset(); }
                 $("#entryDetails").val(JSON.stringify(entry, null, 2));
 
-                // Reactome mappings have no connection type and their
-                // confidence is locked (D-02), so the only correction offered
-                // is deletion — hide both revision blocks. GO/WP keep them.
-                if (mappingType === 'reactome') {
-                    $('#connectionTypeBlock').hide();
-                    $('#confidenceBlock').hide();
-                } else {
-                    $('#connectionTypeBlock').show();
-                    $('#confidenceBlock').show();
-                }
+                // Reactome revisions are still deletion-only: its approve route
+                // rejects anything else and ReactomeMappingModel has no update
+                // path, so there is nothing for an assessment to reach. Enabling
+                // them is the second half of #245.
+                renderAssessment(entry, mappingType);
+                syncDeletionState();
 
                 var isLoggedIn = document.body.getAttribute('data-is-logged-in') === 'true';
                 $("#proposalForm").data("entry", entry);
@@ -775,7 +905,10 @@
                     go_id: b.data('go-id'),
                     go_name: b.data('go-name'),
                     connection_type: b.data('connection-type'),
-                    confidence_level: b.data('confidence')
+                    confidence_level: b.data('confidence'),
+                    connection_score: b.data('connection-score'),
+                    specificity_score: b.data('specificity-score'),
+                    evidence_score: b.data('evidence-score')
                 }, 'go');
             });
 
@@ -823,11 +956,17 @@
                 formData.append('userEmail', $('#userEmail').val());
                 formData.append('userAffiliation', $('#userAffiliation').val());
                 formData.append('csrf_token', $('input[name="csrf_token"]').val());
-                formData.append('deleteEntry', $('#deleteEntry').is(':checked') ? 'on' : '');
-                formData.append('changeConfidence', $('input[name="changeConfidence"]:checked').val() || '');
-                // Reactome has no connection type; only send changeType for wp/go.
-                if (mappingType !== 'reactome') {
-                    formData.append('changeType', $('input[name="changeType"]:checked').val() || '');
+                var deleting = $('#deleteEntry').is(':checked');
+                formData.append('deleteEntry', deleting ? 'on' : '');
+
+                // #245: send the assessment answers instead of a bare tier. A
+                // deletion sends none — the server refuses answers alongside one
+                // rather than dropping them silently.
+                if (!deleting) {
+                    (ASSESSMENT_QUESTIONS[mappingType] || []).forEach(function (q) {
+                        var value = $('input[name="' + q.name + '"]:checked').val();
+                        if (value) { formData.append(q.name, value); }
+                    });
                 }
 
                 $.ajax({
