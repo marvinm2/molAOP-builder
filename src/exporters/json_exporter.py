@@ -8,6 +8,8 @@ from typing import Dict, List
 
 logger = logging.getLogger(__name__)
 
+from src.exporters.licence import DATASET_LICENCE_SPDX, DATASET_LICENCE_URI
+
 
 class JSONExporter:
     """Export dataset in JSON and JSON-LD formats"""
@@ -38,7 +40,7 @@ class JSONExporter:
                     "export_timestamp": datetime.now().isoformat(),
                     "version": self.metadata.metadata.get("version", "1.0.0"),
                     "record_count": len(mappings),
-                    "license": "CC-BY-4.0"
+                    "license": DATASET_LICENCE_SPDX
                 },
                 "data_schema": {
                     "fields": [
@@ -170,7 +172,7 @@ class JSONExporter:
                 "description": "Curated mappings between AOP Key Events and WikiPathways biological pathways with confidence assessments and connection type classifications",
                 "datePublished": datetime.now().isoformat(),
                 "version": self.metadata.metadata.get("version", "1.0.0"),
-                "license": "https://creativecommons.org/licenses/by/4.0/",
+                "license": DATASET_LICENCE_URI,
                 "creator": {
                     "@type": "Organization",
                     "name": "KE-WP Mapping Community"
