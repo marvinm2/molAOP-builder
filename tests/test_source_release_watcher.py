@@ -101,7 +101,8 @@ def test_nothing_recorded_locally_is_not_drift(monkeypatch):
 
 # --- exit codes, which are what a cron alerts on ---------------------------
 
-def test_report_mode_exits_2_when_something_drifted(monkeypatch):
+def test_report_mode_exits_2_when_something_drifted(monkeypatch, tmp_path):
+    monkeypatch.setattr(watcher, "REBUILT_MARKER", str(tmp_path / ".corpus-rebuilt"))
     _patch(
         monkeypatch,
         live={"wikipathways": {"version": "2026-07-10", "unavailable": False}},
@@ -140,7 +141,8 @@ def test_a_failed_rebuild_exits_3_and_leaves_the_manifest_alone(monkeypatch):
     assert captured == [], "capture_source_versions must not run after a failure"
 
 
-def test_a_successful_rebuild_refreshes_the_manifest(monkeypatch):
+def test_a_successful_rebuild_refreshes_the_manifest(monkeypatch, tmp_path):
+    monkeypatch.setattr(watcher, "REBUILT_MARKER", str(tmp_path / ".corpus-rebuilt"))
     _patch(
         monkeypatch,
         live={"wikipathways": {"version": "2026-07-10", "unavailable": False}},
