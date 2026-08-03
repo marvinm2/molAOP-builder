@@ -318,10 +318,41 @@ def submit():
         return jsonify({"error": "Failed to add entry"}), 500
 
 
+@api_bp.route("/api/ke-snapshot", methods=["GET"])
+@general_rate_limit
+def get_ke_snapshot_info():
+    """How old the Key Event dropdown is, and how many entries it holds (#239).
+
+    The dropdown is a fixed option list served from a precomputed snapshot of
+    AOP-Wiki, with no search fallback the way pathways have — so a Key Event
+    added upstream since the snapshot was taken cannot be curated at all, and
+    nothing in the UI said so. This does not fix the staleness; it makes it
+    legible, which is the part that was costing curator time.
+    """
+    try:
+        from flask import current_app
+        container = getattr(current_app, "service_container", None)
+        snapshot_date = container.ke_snapshot_date() if container else None
+        return jsonify({
+            "key_event_count": len(ke_metadata) if ke_metadata else 0,
+            "snapshot_date": snapshot_date,
+            "source": "precomputed" if ke_metadata else "live_sparql",
+        }), 200
+    except Exception as e:
+        logger.error("KE snapshot info failed: %s", e)
+        return jsonify({"error": "Could not resolve KE snapshot info"}), 500
+
+
 @api_bp.route("/get_ke_options", methods=["GET"])
 @sparql_rate_limit
 def get_ke_options():
-    """Fetch Key Event options from pre-computed metadata or SPARQL endpoint"""
+    """Fetch Key Event options from pre-computed metadata or SPARQL endpoint
+
+    Returns a bare array for backward compatibility. How old that array is, is
+    reported separately by /api/ke-snapshot (#239) — a curator who cannot find
+    a Key Event needs to be able to tell "this KE does not exist" from "this
+    dropdown is older than this KE".
+    """
     try:
         # Serve from pre-computed metadata if available
         if ke_metadata:

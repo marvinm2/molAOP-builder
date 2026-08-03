@@ -108,6 +108,37 @@ def load_kes_from_metadata(metadata_path):
     ]
 
 
+def refresh_ke_metadata(metadata_path='data/ke_metadata.json'):
+    """Re-fetch the Key Event snapshot from AOP-Wiki and write it.
+
+    Split out so the KE list can be refreshed without recomputing a single
+    embedding (#239). The dropdown is served straight from this file, so a
+    stale snapshot means a Key Event added upstream cannot be curated at all —
+    there is no search fallback on the KE side of the form. Coupling that
+    refresh to the (expensive) embedding pass is why it was never run often
+    enough.
+
+    A Key Event present here but absent from the embeddings artifact is
+    already handled: the app encodes its title live on a miss. So the two
+    genuinely can run on different cadences.
+    """
+    logger.info("Fetching Key Events from AOP-Wiki...")
+    kes = fetch_all_kes()
+    metadata = [
+        {
+            'KElabel': ke['ke_id'],
+            'KEtitle': ke['ke_title'],
+            'KEdescription': ke['ke_description'],
+            'biolevel': ke['biolevel'],
+            'KEpage': ke['ke_page'],
+        }
+        for ke in kes
+    ]
+    save_metadata(metadata, metadata_path)
+    logger.info("Wrote %d Key Events -> %s", len(metadata), metadata_path)
+    return kes
+
+
 def precompute_all_ke_embeddings(output_path='data/ke_embeddings.npz',
                                   metadata_path='data/ke_metadata.json',
                                   refresh_metadata=False):
@@ -138,18 +169,7 @@ def precompute_all_ke_embeddings(output_path='data/ke_embeddings.npz',
             logger.info("Refreshing KE metadata from AOP-Wiki (--refresh-metadata)...")
         else:
             logger.info("No %s found — fetching from AOP-Wiki to create it.", metadata_path)
-        kes = fetch_all_kes()
-        metadata = [
-            {
-                'KElabel': ke['ke_id'],
-                'KEtitle': ke['ke_title'],
-                'KEdescription': ke['ke_description'],
-                'biolevel': ke['biolevel'],
-                'KEpage': ke['ke_page'],
-            }
-            for ke in kes
-        ]
-        save_metadata(metadata, metadata_path)
+        kes = refresh_ke_metadata(metadata_path)
     else:
         kes = load_kes_from_metadata(metadata_path)
         logger.info(
@@ -212,5 +232,18 @@ if __name__ == '__main__':
             "Event snapshot the curation UI serves."
         ),
     )
+    parser.add_argument(
+        '--metadata-only',
+        action='store_true',
+        help=(
+            "Refresh ke_metadata.json from AOP-Wiki and stop — no embeddings "
+            "are computed and BioBERT is never loaded. This is the cheap "
+            "refresh the KE dropdown needs (#239); embeddings can follow on "
+            "their own cadence, since a Key Event without one is encoded live."
+        ),
+    )
     args = parser.parse_args()
-    precompute_all_ke_embeddings(refresh_metadata=args.refresh_metadata)
+    if args.metadata_only:
+        refresh_ke_metadata()
+    else:
+        precompute_all_ke_embeddings(refresh_metadata=args.refresh_metadata)

@@ -1,4 +1,4 @@
-.PHONY: help install test lint run docker-build docker-run clean capture-versions backfill-versions go-hierarchy go-corpus wp-corpus wp-annotations ke-corpus ke-corpus-refresh
+.PHONY: help install test lint run docker-build docker-run clean capture-versions backfill-versions go-hierarchy go-corpus wp-corpus wp-annotations ke-corpus ke-corpus-refresh ke-metadata
 
 help:		## Show this help
 	@echo "Available targets:"
@@ -54,6 +54,9 @@ ke-corpus:	## Rebuild the KE embeddings (title-only + with-description) from the
 
 ke-corpus-refresh:	## As ke-corpus, but ALSO re-fetch Key Events from AOP-Wiki and rewrite ke_metadata.json (moves the KE snapshot)
 	python scripts/precompute_ke_embeddings.py --refresh-metadata
+
+ke-metadata:	## Refresh ONLY the KE snapshot from AOP-Wiki (no embeddings, no BioBERT) — the cheap dropdown refresh
+	python scripts/precompute_ke_embeddings.py --metadata-only
 
 wp-annotations:	## Refresh data/wikipathways_gene_annotations.json + wikipathways_gene_counts.json (gene-set sizes shown in search/suggestions)
 	python scripts/download_wikipathways_annotations.py

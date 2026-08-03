@@ -5,6 +5,7 @@ Provides centralized management of application services and dependencies
 import json
 import logging
 import os
+from datetime import datetime
 
 from authlib.integrations.flask_client import OAuth
 
@@ -678,4 +679,82 @@ class ServiceContainer:
         except Exception as e:
             logger.error(f"Embedding health check failed: {e}")
 
+        # Report Key Events that hold mappings but are missing from the KE
+        # snapshot (#239). Such a Key Event cannot be selected in the UI that
+        # produced its own mapping: #ke_id is a Select2 over a fixed option
+        # list served from ke_metadata.json, with no search fallback the way
+        # pathways have. Nine were found this way, and nothing surfaced them —
+        # they had to be noticed one dropdown at a time.
+        #
+        # Deliberately not folded into the top-level status. There are two
+        # causes with different remedies: a stale snapshot, which a refresh
+        # fixes, and a Key Event withdrawn from AOP-Wiki entirely (KE 123),
+        # which no refresh can fix and which must not leave the service
+        # permanently "degraded".
+        try:
+            status["services"]["ke_snapshot"] = self._ke_snapshot_drift()
+        except Exception as e:
+            logger.error(f"KE snapshot drift check failed: {e}")
+
         return status
+
+    def _ke_snapshot_drift(self) -> dict:
+        """Key Events referenced by mappings but absent from ke_metadata.json.
+
+        Reads the already-loaded metadata index only — never the lazy property,
+        so a health check cannot trigger a corpus load.
+        """
+        index = self._ke_metadata_index
+        if index is None:
+            return {"checked": False, "reason": "KE metadata not loaded"}
+
+        mapped_kes = set()
+        conn = self.database.get_connection()
+        try:
+            for table in ("mappings", "ke_go_mappings", "ke_reactome_mappings"):
+                exists = conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                    (table,),
+                ).fetchone()
+                if exists:
+                    mapped_kes.update(
+                        row[0]
+                        for row in conn.execute(f"SELECT DISTINCT ke_id FROM {table}")
+                        if row[0]
+                    )
+        finally:
+            conn.close()
+
+        missing = sorted(mapped_kes - set(index))
+        if missing:
+            logger.warning(
+                "%d Key Event(s) hold mappings but are absent from the KE "
+                "snapshot and cannot be selected in the UI: %s",
+                len(missing), ", ".join(missing),
+            )
+        return {
+            "checked": True,
+            "snapshot_size": len(index),
+            "snapshot_date": self.ke_snapshot_date(),
+            "mapped_key_events": len(mapped_kes),
+            "missing_from_snapshot": missing,
+        }
+
+    def ke_snapshot_date(self):
+        """When the KE snapshot was last written, as an ISO-8601 date.
+
+        The app otherwise gives a curator no way to tell how old the Key Event
+        list is, so "I cannot find this KE" is indistinguishable from "this KE
+        does not exist" (#239). Much cheaper than fixing the refresh path, and
+        it removes the part that wastes a curator's time.
+        """
+        path = os.path.join(PROJECT_ROOT, 'data', 'ke_metadata.json')
+        if not os.path.exists(path):
+            return None
+        try:
+            return datetime.utcfromtimestamp(
+                os.path.getmtime(path)
+            ).strftime('%Y-%m-%d')
+        except Exception as e:
+            logger.debug("Could not read KE snapshot date: %s", e)
+            return None

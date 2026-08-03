@@ -37,18 +37,43 @@ def test_metadata_refresh_is_opt_in():
     assert "--refresh-metadata" in source
 
 
-def test_fetch_is_reachable_only_via_the_flag_or_a_missing_file():
-    """`fetch_all_kes()` must be guarded, not called unconditionally.
+def test_fetch_is_reachable_only_via_a_flag_or_a_missing_file():
+    """The AOP-Wiki fetch must be guarded, not called unconditionally.
 
-    Pins the actual defect: the old code called it on every run.
+    Pins the actual defect: the old code called it on every run. #239 moved
+    the fetch into `refresh_ke_metadata()` so the snapshot can be refreshed
+    without recomputing embeddings, so the guarantee is now that
+    `precompute_all_ke_embeddings` reaches it only through the guard.
     """
     source = _read(SCRIPT)
     body = source[source.index("def precompute_all_ke_embeddings("):]
     guard = "if refresh_metadata or not os.path.exists(metadata_path):"
     assert guard in body, "the AOP-Wiki fetch must sit behind the opt-in guard"
-    assert body.index(guard) < body.index("fetch_all_kes()"), (
-        "fetch_all_kes() must be reached only through the guard"
+    assert body.index(guard) < body.index("refresh_ke_metadata("), (
+        "refresh_ke_metadata() must be reached only through the guard"
     )
+    assert "fetch_all_kes()" not in body, (
+        "the embedding path must not call fetch_all_kes() directly — it goes "
+        "through refresh_ke_metadata(), which is the only writer of the snapshot"
+    )
+
+
+def test_metadata_only_refreshes_the_snapshot_without_embedding():
+    """`--metadata-only` is the cheap refresh the KE dropdown needs (#239).
+
+    It is a second opt-in route to the fetch, and deliberately so: coupling
+    the snapshot refresh to the embedding pass is why it was never run often
+    enough and fell 34 Key Events behind.
+    """
+    source = _read(SCRIPT)
+    assert "--metadata-only" in source
+    assert "def refresh_ke_metadata(" in source
+
+    entry = source[source.index('if __name__'):]
+    assert "if args.metadata_only:" in entry
+    assert entry.index("refresh_ke_metadata()") < entry.index(
+        "precompute_all_ke_embeddings("
+    ), "--metadata-only must return before the embedding pass"
 
 
 def test_load_kes_from_metadata_maps_every_field_the_embedding_text_uses(tmp_path):
