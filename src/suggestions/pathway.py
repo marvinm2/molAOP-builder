@@ -31,6 +31,7 @@ class PathwaySuggestionService:
         embedding_service=None,
         ke_override_model=None,
         wikipathways_annotations_path: str = 'data/wikipathways_gene_annotations.json',
+        wikipathways_gene_counts_path: str = 'data/wikipathways_gene_counts.json',
     ):
         self.cache_model = cache_model
         self.config = config or ConfigLoader.get_default_config()
@@ -46,6 +47,14 @@ class PathwaySuggestionService:
         # Degrades to {} — a missing corpus must cost the chip, not the search.
         self.wikipathways_gene_annotations: Dict[str, list] = {}
         self._load_wikipathways_annotations(wikipathways_annotations_path)
+
+        # Gene counts for every pathway, including the ones the [10,500]
+        # filter excludes (#238). The annotations snapshot above covers only
+        # the admitted 803, so without this a curator shown an excluded
+        # pathway in search gets no chip and no reason — which is the silence
+        # the issue is about, not the limit itself.
+        self.wikipathways_gene_counts: Dict[str, int] = {}
+        self._load_wikipathways_gene_counts(wikipathways_gene_counts_path)
 
     def get_pathway_suggestions(
         self, ke_id: str, ke_title: str, bio_level: str = None, limit: int = 10
@@ -133,6 +142,27 @@ class PathwaySuggestionService:
         except Exception as e:
             logger.warning("Could not load WikiPathways gene annotations: %s", e)
 
+    def _load_wikipathways_gene_counts(self, path: str) -> None:
+        """Load {pathwayID: gene count} for every pathway, filtered or not (#238).
+
+        Written by scripts/download_wikipathways_annotations.py alongside the
+        annotations file. Optional in exactly the same way: a missing file
+        costs the chip on out-of-range pathways, never the search.
+        """
+        resolved = path if os.path.isabs(path) else os.path.join(PROJECT_ROOT, path)
+        if not os.path.exists(resolved):
+            logger.info("WikiPathways gene counts not found: %s", resolved)
+            return
+        try:
+            with open(resolved, 'r', encoding='utf-8') as f:
+                self.wikipathways_gene_counts.update(json.load(f))
+            logger.info(
+                "Loaded gene counts for %d WikiPathways entries",
+                len(self.wikipathways_gene_counts),
+            )
+        except Exception as e:
+            logger.warning("Could not load WikiPathways gene counts: %s", e)
+
     def _gene_count_for(self, pathway_id: str) -> Optional[int]:
         """Resolved gene-set size for a pathway, or None when it is unknown (#223).
 
@@ -146,13 +176,18 @@ class PathwaySuggestionService:
         Reporting either as 0 would be a fabrication; the frontend suppresses
         the chip on None.
 
-        Search and embedding suggestions draw from data/pathway_metadata.json,
-        whose 803 IDs are set-equal to the snapshot's, so in those paths a
-        resolved count is always available when the file is mounted.
+        Since #238 the search corpus is no longer filtered, so search can now
+        return a pathway the annotations snapshot omits. A second snapshot,
+        data/wikipathways_gene_counts.json, carries counts for those and is
+        consulted only as a fallback — a deployment without it behaves exactly
+        as it did before, returning None and suppressing the chip.
         """
         annotations = getattr(self, 'wikipathways_gene_annotations', None) or {}
         genes = annotations.get(pathway_id)
-        return len(genes) if genes is not None else None
+        if genes is not None:
+            return len(genes)
+        counts = getattr(self, 'wikipathways_gene_counts', None) or {}
+        return counts.get(pathway_id)
 
     def _get_genes_from_ke(self, ke_id: str) -> List[Dict[str, str]]:
         """Extract gene identifier triples ({ncbi, hgnc, symbol}) for a Key Event."""
@@ -518,6 +553,30 @@ class PathwaySuggestionService:
             logger.error("Error loading pathway metadata: %s", e)
             return []
 
+    def _get_rankable_pathways(self) -> List[Dict[str, str]]:
+        """Pathways the suggestion ranker may propose.
+
+        The `[MIN_GENES, MAX_GENES]` gene-set-size filter applies here and
+        nowhere else (#238). A pathway it excludes stays fully selectable
+        through the dropdown and `/search_pathways`; it is only kept out of
+        the ranked suggestion list, which is what the filter was written for.
+
+        A pathway with no `inSuggestionCorpus` key is treated as rankable, so
+        a data mount carrying a corpus written before this change keeps its
+        previous behaviour instead of losing every suggestion.
+        """
+        all_pathways = self._get_all_pathways_for_search()
+        rankable = [
+            p for p in all_pathways if p.get('inSuggestionCorpus', True)
+        ]
+        if len(rankable) != len(all_pathways):
+            logger.info(
+                "Ranking %d of %d pathways (%d outside the gene-set-size "
+                "bounds remain selectable but are not suggested)",
+                len(rankable), len(all_pathways), len(all_pathways) - len(rankable),
+            )
+        return rankable
+
     def _clean_text(self, text: str) -> str:
         """Clean and normalize text for comparison"""
         if not text:
@@ -576,8 +635,14 @@ class PathwaySuggestionService:
             logger.debug("KE description toggle: global=%s, ke_disabled=%s, use_desc=%s",
                          global_toggle, ke_id in disabled_kes, use_desc)
 
-            # Get all pathways
-            all_pathways = self._get_all_pathways_for_search()
+            # Rank only the pathways the gene-set-size filter admits (#238).
+            # The filter used to be baked into pathway_metadata.json, which made
+            # it govern the manual dropdown and the search box as well; it now
+            # travels as a per-pathway flag and is applied here, where its
+            # rationale actually holds — a gene set outside [10,500] is a poor
+            # Key Event signature to *propose*, but a curator who knows the
+            # right pathway must still be able to pick it.
+            all_pathways = self._get_rankable_pathways()
 
             # Use batch processing for efficiency — internally calls
             # get_ke_embedding_for_matching with use_description flag
@@ -652,8 +717,11 @@ class PathwaySuggestionService:
                 logger.info("Ontology tag matching disabled")
                 return []
 
-            # Load pathways with ontology tags
-            all_pathways = self._get_all_pathways_for_search()
+            # Load pathways with ontology tags. This also feeds the suggestion
+            # list, so it obeys the same gene-set-size bounds as the embedding
+            # ranker (#238) — otherwise a pathway excluded from one suggestion
+            # signal would reappear through the other.
+            all_pathways = self._get_rankable_pathways()
 
             # Clean and extract biological keywords from KE title
             ke_title_clean = self._clean_text(remove_directionality_terms(ke_title))

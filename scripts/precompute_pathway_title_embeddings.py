@@ -230,13 +230,30 @@ def precompute_pathway_title_embeddings(output_path='data/pathway_title_embeddin
 
     logger.info(f"After removing duplicates: {len(unique_pathways)} unique pathways")
 
-    # Restrict to the [10,500]-gene filtered corpus, if the filter list exists.
-    # Everything downstream (metadata, embeddings) is then produced already-filtered.
+    # Mark which pathways the [10,500]-gene filter admits, rather than dropping
+    # the rest (#238). The filter's rationale is about what the *ranker* should
+    # propose — a gene set outside those bounds is a poor Key Event signature —
+    # but writing it into the corpus artifact made it govern the manual dropdown
+    # and the search box too, so a curator could not select a small, exactly
+    # correct pathway even knowing its ID. WP699 (Aflatoxin B1 metabolism, 7
+    # genes) was unselectable for the Key Event it is named after.
+    #
+    # Metadata now carries every pathway with an `inSuggestionCorpus` flag; the
+    # ranker filters on that flag at query time (src/suggestions/pathway.py).
+    # Embeddings stay restricted to the admitted set, since only those are ever
+    # ranked — so this does not grow the .npz.
     filtered_ids = load_filtered_pathway_ids()
+    for pathway in unique_pathways:
+        pathway['inSuggestionCorpus'] = (
+            True if filtered_ids is None else pathway['pathwayID'] in filtered_ids
+        )
     if filtered_ids is not None:
-        before = len(unique_pathways)
-        unique_pathways = [p for p in unique_pathways if p['pathwayID'] in filtered_ids]
-        logger.info("Gene-set-size filter: %d -> %d pathways", before, len(unique_pathways))
+        admitted = sum(1 for p in unique_pathways if p['inSuggestionCorpus'])
+        logger.info(
+            "Gene-set-size filter: %d of %d pathways are rankable; "
+            "all %d remain selectable",
+            admitted, len(unique_pathways), len(unique_pathways),
+        )
 
     # Fetch enrichment data (ontology tags and publications)
     logger.info("Fetching pathway ontology tags...")
@@ -260,9 +277,13 @@ def precompute_pathway_title_embeddings(output_path='data/pathway_title_embeddin
     # Save metadata in the format expected by /get_pathway_options
     save_metadata(unique_pathways, metadata_path)
 
-    # Build {id: text} dict with directionality removal + entity extraction
+    # Build {id: text} dict with directionality removal + entity extraction.
+    # Only the rankable pathways need embedding — the rest are reachable through
+    # the dropdown and search, which are text-matched, not embedded (#238).
     items = {}
     for pathway in unique_pathways:
+        if not pathway.get('inSuggestionCorpus', True):
+            continue
         items[pathway['pathwayID']] = extract_entities(
             remove_directionality_terms(pathway['pathwayTitle'])
         )

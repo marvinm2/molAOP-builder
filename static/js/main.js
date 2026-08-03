@@ -3055,6 +3055,24 @@ This helps identify gaps in existing pathways for future development.">❓</span
         return `<span class="gene-set-chip${cls}" title="${this.escapeHtml(tooltip)}">${this.escapeHtml(label)}</span>`;
     }
 
+    renderNotSuggestedChip(pathway) {
+        // A pathway outside the gene-set-size bounds is selectable but is not
+        // offered in the suggestion list (#238). Say so on the search result,
+        // rather than letting the curator wonder why a pathway they can find
+        // by name never appeared among the suggestions. Before this the
+        // pathway was simply absent from search too, which read as "does not
+        // exist" instead of "was not offered".
+        if (pathway.inSuggestionCorpus !== false) return '';
+
+        const n = Number(pathway.pathway_total_genes);
+        const size = Number.isFinite(n) ? `${n} genes — ` : '';
+        const tooltip = `${size}outside the gene-set-size range used for ranking, `
+            + `so this pathway is not offered as a suggestion. It can still be `
+            + `selected, and the mapping is saved normally.`;
+        return `<span class="gene-set-chip gene-set-chip--warn" `
+            + `title="${this.escapeHtml(tooltip)}">Not suggested</span>`;
+    }
+
     getScoreDetails(scores, suggestion) {
         // Check if this is a combined suggestion or individual method
         if (suggestion.scores) {
@@ -3730,6 +3748,7 @@ This helps identify gaps in existing pathways for future development.">❓</span
                             <div class="text-dark-heading" style="display: flex; align-items: center; gap: 6px; font-weight: bold; margin-bottom: 4px; flex-wrap: wrap;">
                                 ${titleHighlighted}
                                 ${this.renderGeneSetSizeChip(result.pathway_total_genes)}
+                                ${this.renderNotSuggestedChip(result)}
                             </div>
                             <div class="text-muted" style="font-size: 11px; margin-bottom: 4px;">
                                 ID: ${result.pathwayID}
