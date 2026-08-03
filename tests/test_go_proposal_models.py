@@ -428,7 +428,7 @@ def auth_client_filedb(client, tmp_path, monkeypatch):
     monkeypatch.setattr(real_go_proposal, "db", real_db)
 
     with client.session_transaction() as sess:
-        sess["user"] = {"username": "testuser", "email": "test@example.com"}
+        sess["user"] = {"username": "github:testuser", "email": "test@example.com"}
     return client
 
 

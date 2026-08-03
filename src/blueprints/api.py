@@ -131,6 +131,35 @@ _WP_STEP_COLUMNS = (
 )
 
 
+def _proposal_identity():
+    """Return ``(provider_username, error)`` for the session submitting a proposal.
+
+    The identity columns carry a DB trigger requiring a ``provider:`` prefix.
+    Without this check an unprefixed identity reaches the INSERT, the trigger
+    aborts it, ``create_proposal`` swallows the exception and returns None, and
+    the route reports a bare 500 that names nothing — which is how a workshop
+    guest's every submission failed silently (#266). Fail here, and say so.
+    """
+    username = session.get("user", {}).get("username", "")
+    if (
+        not username
+        or ":" not in username
+        or not SecurityValidation.validate_username(username)
+    ):
+        logger.error(
+            "Proposal blocked: unusable session identity %s",
+            sanitize_log(str(username) or "<empty>"),
+        )
+        return None, (
+            jsonify({
+                "error": "Your session is not valid for submitting proposals. "
+                         "Please sign out and sign in again.",
+            }),
+            401,
+        )
+    return username, None
+
+
 def _collect_step_answers(form, payload):
     """Copy any answered step1..step4 from `form` into `payload`.
 
@@ -373,14 +402,9 @@ def submit():
         )
 
         # Get current user
-        created_by = session.get("user", {}).get("username", "anonymous")
-
-        # Additional validation for GitHub username if available
-        if created_by != "anonymous" and not SecurityValidation.validate_username(
-            created_by
-        ):
-            logger.error("Invalid username format: %s", created_by)
-            return jsonify({"error": "Authentication error"}), 401
+        created_by, identity_error = _proposal_identity()
+        if identity_error:
+            return identity_error
 
         # Capture suggestion score from form (stored on proposal; written to mapping at approval)
         suggestion_score_raw = request.form.get("suggestion_score")
@@ -816,7 +840,9 @@ def submit_proposal():
             return jsonify({"error": "Original mapping not found."}), 404
 
         # Get current user
-        provider_username = session.get("user", {}).get("username", "unknown")
+        provider_username, identity_error = _proposal_identity()
+        if identity_error:
+            return identity_error
 
         # #245: resolve and score the assessment once the KE id is known.
         answers, proposed_confidence, error = _resolve_step_answers(
@@ -974,7 +1000,9 @@ def submit_go_proposal():
         if not mapping_id:
             return jsonify({"error": "Original mapping not found."}), 404
 
-        provider_username = session.get("user", {}).get("username", "unknown")
+        provider_username, identity_error = _proposal_identity()
+        if identity_error:
+            return identity_error
 
         proposal_id = go_proposal_model.create_proposal(
             mapping_id=mapping_id,
@@ -1073,7 +1101,9 @@ def submit_reactome_proposal():
         if not mapping_id:
             return jsonify({"error": "Original mapping not found."}), 404
 
-        provider_username = session.get("user", {}).get("username", "unknown")
+        provider_username, identity_error = _proposal_identity()
+        if identity_error:
+            return identity_error
 
         # Same four-question instrument and the same two refusals as the KE-WP
         # revision path — they share the resolver rather than each having a copy.
@@ -1854,6 +1884,14 @@ def submit_go_mapping():
             "confidence_level": request.form.get("confidence_level"),
             "go_namespace": request.form.get("go_namespace", "biological_process"),
         }
+        # #270: the dimension scores go through the schema now. An unanswered
+        # dimension arrives as "" and is omitted rather than sent as null, so
+        # Marshmallow's optional-field semantics fire instead of failing OneOf
+        # on an empty string — the same convention as _collect_step_answers.
+        for field in ("connection_score", "specificity_score", "evidence_score"):
+            value = request.form.get(field)
+            if value:
+                submit_data[field] = value
 
         is_valid, validated_data, errors = validate_request_data(
             GoMappingSchema, submit_data
@@ -1871,10 +1909,9 @@ def submit_go_mapping():
         confidence_level = validated_data["confidence_level"]
         go_namespace = validated_data.get("go_namespace", "biological_process")
 
-        created_by = session.get("user", {}).get("username", "anonymous")
-
-        if created_by != "anonymous" and not SecurityValidation.validate_username(created_by):
-            return jsonify({"error": "Authentication error"}), 401
+        created_by, identity_error = _proposal_identity()
+        if identity_error:
+            return identity_error
 
         if not go_proposal_model:
             return jsonify({"error": "GO mapping service unavailable"}), 503
@@ -1886,16 +1923,9 @@ def submit_go_mapping():
         except (ValueError, TypeError):
             suggestion_score = None
 
-        # Capture optional dimension scores from form
-        def _parse_int(val):
-            try:
-                return int(val) if val is not None else None
-            except (ValueError, TypeError):
-                return None
-
-        connection_score = _parse_int(request.form.get("connection_score"))
-        specificity_score = _parse_int(request.form.get("specificity_score"))
-        evidence_score = _parse_int(request.form.get("evidence_score"))
+        connection_score = validated_data.get("connection_score")
+        specificity_score = validated_data.get("specificity_score")
+        evidence_score = validated_data.get("evidence_score")
 
         proposal_id = go_proposal_model.create_new_pair_go_proposal(
             ke_id=ke_id,
@@ -2065,10 +2095,9 @@ def submit_reactome_mapping():
             submitted_level=confidence_level,
         )
 
-        created_by = session.get("user", {}).get("username", "anonymous")
-
-        if created_by != "anonymous" and not SecurityValidation.validate_username(created_by):
-            return jsonify({"error": "Authentication error"}), 401
+        created_by, identity_error = _proposal_identity()
+        if identity_error:
+            return identity_error
 
         if not reactome_proposal_model:
             return jsonify({"error": "Reactome mapping service unavailable"}), 503

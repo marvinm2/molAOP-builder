@@ -288,7 +288,17 @@ class TestGuestAuth:
         assert response.status_code == 302
 
     def test_guest_can_submit_mapping(self, guest_client):
-        """Test that a guest user can submit a mapping"""
+        """Test that a guest user can submit a mapping.
+
+        This asserted only `!= 401` and so passed throughout #266, when a guest's
+        every submission failed with a 500 from the identity trigger. Asserting
+        that it is not one particular failure is not asserting that it worked.
+
+        This fixture's blueprint models are bound to `:memory:` and cannot reach
+        the proposals table, so the strongest claim available here is that the
+        guest identity is accepted. The end-to-end proof is
+        test_guest_proposal_submission_266.py, which runs against a real file.
+        """
         response = guest_client.post(
             "/submit",
             data={
@@ -300,8 +310,7 @@ class TestGuestAuth:
                 "connection_type": "undefined",
             },
         )
-        # Should not get 401 (auth error) - guest is authenticated
-        assert response.status_code != 401
+        assert response.status_code != 401, response.get_data(as_text=True)
 
     def test_guest_cannot_access_admin(self, guest_client):
         """Test that guest users cannot access admin routes"""

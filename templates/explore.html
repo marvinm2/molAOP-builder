@@ -980,9 +980,13 @@
                         document.getElementById('proposalForm').reset();
                     },
                     error: function(xhr) {
-                        var errorMsg = (xhr.responseJSON && xhr.responseJSON.error) ?
-                            xhr.responseJSON.error : 'Failed to submit proposal';
-                        alert('Error: ' + errorMsg);
+                        var json = xhr.responseJSON || {};
+                        var errorMsg = json.error || 'Failed to submit proposal';
+                        // The server names the offending field in `details`;
+                        // showing only `error` turned every validation failure
+                        // into "Invalid input data" with nothing to act on (#266).
+                        var details = formatErrorDetails(json.details);
+                        alert('Error: ' + errorMsg + (details ? '\n\n' + details : ''));
                     }
                 });
             });
@@ -993,6 +997,26 @@
             $("#proposalModal").hide();
             $("#wpExploreModal").removeClass('is-visible');
             $("#modalOverlay").hide();
+        }
+
+        var FIELD_LABELS = {
+            userName: 'Name',
+            userEmail: 'Email',
+            userAffiliation: 'Affiliation'
+        };
+
+        // Flatten Marshmallow's {field: [messages]} into "Label: message" lines.
+        // A value may be a list, a bare string, or a nested object for a
+        // sub-schema, so recurse rather than assuming the common shape.
+        function formatErrorDetails(details) {
+            if (!details || typeof details !== 'object') { return ''; }
+            return Object.keys(details).map(function (field) {
+                var value = details[field];
+                var message = Array.isArray(value) ? value.join(' ')
+                            : (value && typeof value === 'object') ? formatErrorDetails(value)
+                            : String(value);
+                return message ? (FIELD_LABELS[field] || field) + ': ' + message : '';
+            }).filter(Boolean).join('\n');
         }
 
         function autofillUserData() {
@@ -1011,7 +1035,13 @@
                         ? userInfo.username.substring(idx + 1)
                         : userInfo.username;
                 }
-                if (userEmailField && userInfo.email) { userEmailField.value = userInfo.email; }
+                // Only prefill something the required Email field will accept.
+                // A guest session carries no address, and an OAuth provider may
+                // withhold one; prefilling a non-address left the guest staring
+                // at a validation error on a field they had not touched (#266).
+                if (userEmailField && userInfo.email && userInfo.email.indexOf('@') > -1) {
+                    userEmailField.value = userInfo.email;
+                }
             }
         }
     </script>

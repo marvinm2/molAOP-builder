@@ -61,9 +61,13 @@ def auth_client(client):
 def guest_client(client):
     """Create a guest-authenticated test client"""
     with client.session_transaction() as sess:
+        # Matches what /guest-login issues: a provider-style "guest:" prefix,
+        # which the identity trigger requires, and no email — the old
+        # "guest-<label>" / "workshop-guest" pair was an identity the database
+        # rejected and the email field could never accept (#266).
         sess["user"] = {
-            "username": "guest-test-participant",
-            "email": "workshop-guest",
+            "username": "guest:test-participant",
+            "email": "",
             "is_guest": True,
         }
     return client
