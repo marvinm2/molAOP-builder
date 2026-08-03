@@ -414,6 +414,24 @@ class GoMappingSchema(Schema):
         ),
     )
     go_namespace = GoNamespaceField(load_default="biological_process")
+    # #270: the three assessment dimensions were read straight off the form with
+    # a bare int cast and never declared here, so any integer reached the DB and
+    # the weighted average silently bucketed it into a tier — one bad field could
+    # mint a high-confidence mapping. Same whitelist the revision path uses.
+    # Omitted (not null) for a submission that carries no assessment; the live
+    # data holds no 0, so 1-3 is the range, with NULL for the legacy rows.
+    connection_score = fields.Int(
+        required=False, allow_none=True,
+        validate=validate.OneOf(GO_DIMENSION_SCORES),
+    )
+    specificity_score = fields.Int(
+        required=False, allow_none=True,
+        validate=validate.OneOf(GO_DIMENSION_SCORES),
+    )
+    evidence_score = fields.Int(
+        required=False, allow_none=True,
+        validate=validate.OneOf(GO_DIMENSION_SCORES),
+    )
 
 
 class GoCheckEntrySchema(Schema):
@@ -600,8 +618,12 @@ class SecurityValidation:
         if not isinstance(username, str):
             return False
 
-        # Guest usernames: guest-<label> where label is alphanumeric with hyphens/underscores
-        if username.startswith("guest-"):
+        # Guest usernames: guest:<label>, where label is alphanumeric with
+        # hyphens/underscores. The legacy "guest-" form stays a well-formed
+        # username so a session issued before #266 still reads and displays;
+        # submitting a proposal additionally requires the prefix, so such a
+        # session is asked to sign in again rather than failing at the DB.
+        if username.startswith("guest:") or username.startswith("guest-"):
             guest_label = username[6:]
             return bool(re.match(r"^[a-zA-Z0-9_-]{3,50}$", guest_label))
 

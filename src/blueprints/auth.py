@@ -151,9 +151,15 @@ def guest_login_submit():
         logger.warning("Failed guest login attempt")
         return render_template("guest_login.html", error="Invalid, expired, or exhausted access code.")
 
+    # The identity carries a provider-style "guest:" prefix like every other
+    # login (#266). The identity trigger on proposals.provider_username requires
+    # a prefix, so the old bare "guest-<label>" made a guest's proposal fail at
+    # the DB layer — the one path workshop guests are invited to use. The email
+    # is left empty rather than set to a placeholder: it is autofilled into a
+    # required Email field, and "workshop-guest" could never validate there.
     _start_session({
-        "username": f"guest-{result['label']}",
-        "email": "workshop-guest",
+        "username": f"guest:{result['label']}",
+        "email": "",
         "is_guest": True,
     })
     logger.info("Guest user logged in with label=%s", result["label"])
