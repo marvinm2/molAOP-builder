@@ -25,6 +25,36 @@ KE_WP_BASIS_OPTIONS = ("known", "likely", "possible", "uncertain")
 KE_WP_SPECIFICITY_OPTIONS = ("specific", "includes", "loose")
 KE_WP_COVERAGE_OPTIONS = ("complete", "keysteps", "minor")
 
+# The stored `connection_type` is a different, narrower vocabulary than step1's
+# (issue #264). `bidirectional` and `unclear` are assessment answers, not
+# connection types, and MappingSchema.connection_type rejects both — so a
+# relationship answer must be translated before it reaches the column.
+KE_WP_CONNECTION_TYPES = ("causative", "responsive", "other", "undefined")
+RELATIONSHIP_TO_CONNECTION_TYPE = {
+    "causative": "causative",
+    "responsive": "responsive",
+    "bidirectional": "other",
+    "unclear": "undefined",
+}
+
+
+def connection_type_for_relationship(relationship):
+    """Translate a step1 relationship answer to the stored connection_type.
+
+    Mirrors ``mapConnectionTypeForServer`` in static/js/main.js. Lives here so
+    every writer shares it: the four model-layer dual-write sites reached this
+    column independently and none of them applied the map, which is how 17% of
+    the corpus came to hold out-of-vocabulary values (#264).
+
+    Returns None for a None relationship so callers can fall back to an
+    explicitly supplied connection_type. An unrecognised answer maps to
+    ``undefined`` rather than passing through, matching the JS default — the
+    column's vocabulary is closed and a writer must not widen it.
+    """
+    if relationship is None:
+        return None
+    return RELATIONSHIP_TO_CONNECTION_TYPE.get(relationship, "undefined")
+
 # KE-GO uses its own connection vocabulary (not the KE-WP one above) and the shared
 # confidence tiers. Defined once here because two writers validate against them: the
 # submit schema below, and the admin approve route, where a reviewer may refine both
@@ -88,7 +118,7 @@ class MappingSchema(Schema):
     connection_type = fields.Str(
         required=True,
         validate=validate.OneOf(
-            ["causative", "responsive", "other", "undefined"],
+            list(KE_WP_CONNECTION_TYPES),
             error="Invalid connection type",
         ),
     )
