@@ -317,3 +317,95 @@ def test_legacy_revision_leaves_the_stored_assessment_alone(go_revision_client):
     assert row["evidence_score"] == 2
     assert row["confidence_level"] == "high"
     assert row["connection_type"] == "involves"
+
+
+# --------------------------------------------------------------------------
+# #246 — the reviewer can refine a GO revision, not only a new pair
+# --------------------------------------------------------------------------
+
+def test_reviewer_edits_are_applied_to_a_revision(go_revision_client):
+    """#235 gave the review panel editable GO controls but wired only the
+    new-pair approve path to read them, so for a change proposal the panel
+    posted the reviewer's values and the server discarded them."""
+    client, gm, gpm = go_revision_client
+    _seed(gm, confidence_level="low")
+
+    assert _revise(client, connection_score=1, specificity_score=1,
+                   evidence_score=1).status_code == 200
+    proposal = _only_proposal(gpm)
+    assert proposal["proposed_confidence"] == "low"
+
+    # The reviewer disagrees and scores it up before approving.
+    resp = client.post(
+        f"/admin/go-proposals/{proposal['id']}/approve",
+        data={"connection_score": 3, "specificity_score": 3, "evidence_score": 3},
+    )
+    assert resp.status_code == 200
+
+    row = gm.get_all_mappings()[0]
+    assert row["connection_score"] == 3
+    assert row["evidence_score"] == 3
+    # The tier follows the reviewer's scores, not the submitter's.
+    assert row["confidence_level"] == "high"
+
+
+def test_reviewer_can_change_the_connection_type_on_a_revision(go_revision_client):
+    client, gm, gpm = go_revision_client
+    _seed(gm, connection_type="related")
+
+    assert _revise(client, changeType="describes").status_code == 200
+    proposal = _only_proposal(gpm)
+
+    assert client.post(
+        f"/admin/go-proposals/{proposal['id']}/approve",
+        data={"connection_type": "involves"},
+    ).status_code == 200
+    assert gm.get_all_mappings()[0]["connection_type"] == "involves"
+
+
+def test_reviewer_confidence_override_wins_on_a_revision(go_revision_client):
+    client, gm, gpm = go_revision_client
+    _seed(gm, confidence_level="low")
+
+    assert _revise(client).status_code == 200
+    proposal = _only_proposal(gpm)
+
+    assert client.post(
+        f"/admin/go-proposals/{proposal['id']}/approve",
+        data={"connection_score": 3, "specificity_score": 3,
+              "evidence_score": 3, "confidence_level": "medium"},
+    ).status_code == 200
+    assert gm.get_all_mappings()[0]["confidence_level"] == "medium"
+
+
+def test_invalid_reviewer_values_are_refused_on_a_revision(go_revision_client):
+    client, gm, gpm = go_revision_client
+    _seed(gm, confidence_level="low")
+
+    assert _revise(client).status_code == 200
+    proposal = _only_proposal(gpm)
+
+    for payload in ({"connection_type": "causative"},
+                    {"confidence_level": "excellent"}):
+        resp = client.post(
+            f"/admin/go-proposals/{proposal['id']}/approve", data=payload
+        )
+        assert resp.status_code == 400
+    # Nothing written, proposal still pending.
+    assert gm.get_all_mappings()[0]["confidence_level"] == "low"
+
+
+def test_untouched_revision_approval_keeps_the_submitters_values(go_revision_client):
+    """A bare approval must still store exactly what the submitter recorded."""
+    client, gm, gpm = go_revision_client
+    _seed(gm, confidence_level="low", connection_score=1,
+          specificity_score=1, evidence_score=1)
+
+    assert _revise(client, connection_score=2, specificity_score=2,
+                   evidence_score=2).status_code == 200
+    proposal = _only_proposal(gpm)
+
+    assert _approve(client, proposal["id"]).status_code == 200
+    row = gm.get_all_mappings()[0]
+    assert (row["connection_score"], row["specificity_score"],
+            row["evidence_score"]) == (2, 2, 2)
