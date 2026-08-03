@@ -215,3 +215,57 @@ def test_aopwiki_rebuild_is_the_cheap_metadata_only_path():
     assert commands == [
         ["python", "scripts/precompute_ke_embeddings.py", "--metadata-only"]
     ]
+
+
+# --- the restart marker ----------------------------------------------------
+
+def test_a_successful_rebuild_marks_the_service_for_restart(tmp_path, monkeypatch):
+    """The app reads its artifacts at startup, so a rebuilt corpus is not live
+    until it restarts. The marker is what lets the restart be conditional
+    rather than a weekly session-dropping ritual."""
+    import json as _json
+    marker = tmp_path / ".corpus-rebuilt"
+    monkeypatch.setattr(watcher, "REBUILT_MARKER", str(marker))
+
+    watcher.write_rebuilt_marker(["wikipathways"])
+    assert _json.loads(marker.read_text())["sources"] == ["wikipathways"]
+
+
+def test_an_unapplied_marker_is_merged_not_replaced(tmp_path, monkeypatch):
+    """Two rebuilds between two restarts must not lose the first one's entry,
+    or the restart would be skipped for a corpus that genuinely changed."""
+    import json as _json
+    marker = tmp_path / ".corpus-rebuilt"
+    marker.write_text(_json.dumps({"sources": ["reactome"]}))
+    monkeypatch.setattr(watcher, "REBUILT_MARKER", str(marker))
+
+    watcher.write_rebuilt_marker(["wikipathways"])
+    assert _json.loads(marker.read_text())["sources"] == ["reactome", "wikipathways"]
+
+
+def test_a_corrupt_marker_does_not_lose_the_new_rebuild(tmp_path, monkeypatch):
+    import json as _json
+    marker = tmp_path / ".corpus-rebuilt"
+    marker.write_text("{not json")
+    monkeypatch.setattr(watcher, "REBUILT_MARKER", str(marker))
+
+    watcher.write_rebuilt_marker(["wikipathways"])
+    assert _json.loads(marker.read_text())["sources"] == ["wikipathways"]
+
+
+def test_no_marker_is_written_when_a_rebuild_failed(monkeypatch, tmp_path):
+    """A failed rebuild must not schedule a restart — restarting onto a corpus
+    that was not replaced serves the same data with a dropped session."""
+    marker = tmp_path / ".corpus-rebuilt"
+    monkeypatch.setattr(watcher, "REBUILT_MARKER", str(marker))
+    _patch(
+        monkeypatch,
+        live={"wikipathways": {"version": "2026-07-10", "unavailable": False}},
+        stored=_stored(wikipathways={"release_date": "2026-05-10"}),
+    )
+    monkeypatch.setattr(watcher, "rebuild", lambda source: False)
+    monkeypatch.setattr(watcher.subprocess, "run", lambda *a, **k: None)
+    monkeypatch.setattr(sys, "argv", ["check_source_releases.py", "--rebuild"])
+
+    assert watcher.main() == 3
+    assert not marker.exists()

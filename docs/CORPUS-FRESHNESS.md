@@ -95,7 +95,44 @@ on every pre-existing row, which is the honest value — those scores came from 
 corpus nobody recorded, and backfilling a guess would assert provenance that was
 never captured.
 
-## Deploying the cron
+## Deployed (2026-08-03)
+
+Both jobs are live in `/mnt/gluster/docker/cronjobs/stack.yml` on tgx1 and
+registered with the scheduler.
+
+| Job | Schedule | Image | Does |
+|---|---|---|---|
+| `cronjobs_molaop-builder-refresh-corpora` | Mon 04:00 UTC | this service's own | rebuilds any drifted corpus; writes `data/.corpus-rebuilt` |
+| `cronjobs_molaop-builder-apply-corpus` | Tue 03:00 UTC | `docker:28-cli` | restarts the service **iff** the marker exists, then clears it |
+
+**The rebuild and the restart are deliberately separate, a night apart.** The
+app reads its artifacts at startup, so a rebuilt corpus is not live until it
+restarts. Restarting in the same job would couple the two failure modes; the
+~23 h gap leaves a working day to notice a bad rebuild before curators see it.
+And the restart is conditional on the marker rather than unconditional, because
+a blind weekly restart would drop curator sessions on every week that nothing
+changed.
+
+`apply-corpus` carries `node.role == manager` — a **role** constraint, not a
+host pin, so it still fails over between tgx1 and tgx2. It needs it because it
+talks to the Swarm API, the same reason the scheduler carries it.
+
+> [!warning] The Monday job is inert until this branch ships
+> `check_source_releases.py` is not in the deployed image yet. Until PRs #250
+> and #251 merge and CI publishes a new one, the Monday job fails with `No such
+> file or directory`. The Tuesday job is unaffected — it depends only on the
+> marker — and was verified end to end on 2026-08-03: with a marker present it
+> restarted `molaop-builder` to convergence, `/health` returned `healthy`, and
+> the marker was cleared.
+
+> [!note] Triggering a job by hand needs a scale to 0 first
+> With `restart_policy: condition: none` a completed task still satisfies
+> `replicas: 1`, so `docker service scale <job>=1` is a no-op if a previous run
+> left it at 1. swarm-cronjob does the 0→1→0 cycle itself; by hand you must
+> `scale=0`, wait for `0/0`, then `scale=1` — and leave it at 0 afterwards or
+> the scheduler cannot fire it.
+
+## The stanza, for reference / rebuild
 
 Follows `operations/scheduling-cronjobs.md` in the cluster docs, using the same
 shape as `molaop-builder-backup`: a `replicas: 0` service running **this
@@ -140,8 +177,10 @@ concurrent rebuilds would race on the same artifacts.
 ### Run it now, off-schedule
 
 ```bash
-ssh tgx1 "docker service scale cronjobs_molaop-builder-refresh-corpora=1"
-ssh tgx1 "docker service logs -f cronjobs_molaop-builder-refresh-corpora"
+# scale to 0 FIRST — see the note above, or this is a no-op
+ssh tgx1 "docker service scale cronjobs_molaop-builder-refresh-corpora=0 --detach"
+ssh tgx1 "docker service scale cronjobs_molaop-builder-refresh-corpora=1 --detach"
+ssh tgx1 "docker service logs cronjobs_molaop-builder-refresh-corpora"
 ```
 
 ### Check without rebuilding
@@ -153,11 +192,8 @@ ssh tgx1 'docker exec $(docker ps -qf name=molaop-builder) \
 
 ## What this does not do
 
-- **It does not restart the service.** The app reads the artifacts at startup,
-  so a rebuilt corpus is not live until `docker service update --force
-  molaop-builder`. Worth deciding whether the cron should do that itself; it
-  currently does not, because a forced restart mid-curation is more disruptive
-  than a corpus that is a few hours stale.
+- **It does not restart the service itself.** That is `apply-corpus`'s job, a
+  night later, and only when something was actually rebuilt — see above.
 - **It does not notify.** The exit codes are there for it, but nothing consumes
   them yet. Icinga is on the cluster and is the natural home.
 - **It does not re-embed Key Events.** See the AOP-Wiki note above.
