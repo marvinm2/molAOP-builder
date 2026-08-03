@@ -303,7 +303,7 @@ jobs:
         EOF
 
     - name: Upload deployment record
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: deployment-record
         path: deployment-record.json
