@@ -399,6 +399,10 @@ def approve_proposal(proposal_id: int):
                     approved_by_curator=admin_username,
                     approved_at_curator=approved_at,
                     suggestion_score=proposal_score,
+                    # Carry the corpus alongside the score — a score whose
+                    # corpus is lost at approval is exactly as unreviewable as
+                    # one that was never stamped.
+                    suggestion_corpus=proposal.get("suggestion_corpus"),
                     proposed_by=proposal.get("provider_username"),
                     # Phase 34 ASMT-02: re-thread assessment so the
                     # update path's assessment_version classifier also
@@ -428,6 +432,7 @@ def approve_proposal(proposal_id: int):
                 approved_by_curator=admin_username,
                 approved_at_curator=approved_at,
                 suggestion_score=proposal_score,       # carry score from proposal
+                suggestion_corpus=proposal.get("suggestion_corpus"),
                 proposed_by=proposal.get("provider_username"),
                 # Phase 34 ASMT-02: assessment answers carried from proposal.
                 proposed_relationship=proposed_relationship,

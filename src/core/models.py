@@ -318,6 +318,9 @@ class Database:
             self._migrate_go_mappings_suggestion_score(conn)
             self._migrate_go_mappings_go_namespace(conn)
 
+            # Record which embedding corpus produced each suggestion_score
+            self._migrate_suggestion_corpus(conn)
+
             # Migrate proposals table to add new-pair fields (Phase 3 gap closure)
             self._migrate_proposals_new_pair_fields(conn)
 
@@ -663,6 +666,50 @@ class Database:
         except Exception as e:
             logger.error("Error migrating mappings suggestion_score: %s", e)
             raise
+
+    def _migrate_suggestion_corpus(self, conn):
+        """Add suggestion_corpus to every table that stores a suggestion_score.
+
+        suggestion_corpus (TEXT, nullable) — an identifier for the embedding
+        corpus that produced the score, e.g. "wp:2026-08-03". A score is only
+        interpretable against the corpus it came from: regenerating the
+        embeddings moves every score, so without this a reviewer comparing a
+        stored score against a live ranking cannot tell a real disagreement
+        from a corpus rebuild.
+
+        NULL on every pre-existing row, and that is the honest value — those
+        scores were produced by a corpus nobody recorded. Backfilling a guess
+        would assert provenance that was never captured.
+        """
+        tables = (
+            "mappings", "proposals",
+            "ke_go_mappings", "ke_go_proposals",
+            "ke_reactome_mappings", "ke_reactome_proposals",
+        )
+        for table in tables:
+            try:
+                exists = conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                    (table,),
+                ).fetchone()
+                if not exists:
+                    continue
+                columns = [
+                    row[1] for row in conn.execute(f"PRAGMA table_info({table})")
+                ]
+                if "suggestion_score" not in columns:
+                    # Nothing to attribute on this table.
+                    continue
+                if "suggestion_corpus" not in columns:
+                    conn.execute(
+                        f"ALTER TABLE {table} ADD COLUMN suggestion_corpus TEXT"
+                    )
+                    logger.info(
+                        "Migrated %s table: added suggestion_corpus column", table
+                    )
+            except Exception as e:
+                logger.error("Error migrating %s suggestion_corpus: %s", table, e)
+                raise
 
     def _migrate_go_mappings_suggestion_score(self, conn):
         """
@@ -1790,6 +1837,11 @@ class MappingModel(MappingCountsMixin):
         # the manifest is missing or the upstream is currently 'unknown'.
         wp_release_date: Optional[str] = None,
         aopwiki_snapshot_date: Optional[str] = None,
+        # The embedding corpus that produced suggestion_score, carried from the
+        # proposal at approval. A score is only interpretable against its own
+        # corpus, since a rebuild moves every score.
+        suggestion_score: Optional[float] = None,
+        suggestion_corpus: Optional[str] = None,
     ) -> Optional[int]:
         """Create a new KE-WP mapping"""
         mapping_uuid = str(uuid_lib.uuid4())
@@ -1807,8 +1859,9 @@ class MappingModel(MappingCountsMixin):
                                     proposed_relationship, proposed_basis,
                                     proposed_specificity, proposed_coverage,
                                     assessment_version,
-                                    wp_release_date, aopwiki_snapshot_date)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                    wp_release_date, aopwiki_snapshot_date,
+                                    suggestion_score, suggestion_corpus)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     ke_id,
@@ -1826,6 +1879,8 @@ class MappingModel(MappingCountsMixin):
                     assessment_version,
                     wp_release_date,
                     aopwiki_snapshot_date,
+                    suggestion_score,
+                    suggestion_corpus,
                 ),
             )
 
@@ -1869,7 +1924,12 @@ class MappingModel(MappingCountsMixin):
                        -- this row, and GO/Reactome already select it here. Without
                        -- it no WikiPathways triple can ever carry a score, however
                        -- the column is populated.
-                       suggestion_score
+                       suggestion_score,
+                       -- The corpus that produced suggestion_score. Selected
+                       -- here for the same reason the score is: a consumer that
+                       -- gets a score without knowing its corpus cannot tell a
+                       -- stale score from a current one.
+                       suggestion_corpus
                 FROM mappings
                 ORDER BY created_at DESC
             """
@@ -2173,6 +2233,7 @@ class MappingModel(MappingCountsMixin):
         # Phase C — source-data versioning kwargs; nullable, stamped at approval.
         wp_release_date: Optional[str] = None,
         aopwiki_snapshot_date: Optional[str] = None,
+        suggestion_corpus: Optional[str] = None,
     ) -> bool:
         """
         Update an existing mapping
@@ -2202,6 +2263,7 @@ class MappingModel(MappingCountsMixin):
             "approved_by_curator": "approved_by_curator",
             "approved_at_curator": "approved_at_curator",
             "suggestion_score": "suggestion_score",
+            "suggestion_corpus": "suggestion_corpus",
             "proposed_by": "proposed_by",
             "proposed_relationship": "proposed_relationship",
             "proposed_basis": "proposed_basis",
@@ -2238,6 +2300,7 @@ class MappingModel(MappingCountsMixin):
                 "approved_by_curator": approved_by_curator,
                 "approved_at_curator": approved_at_curator,
                 "suggestion_score": suggestion_score,
+                "suggestion_corpus": suggestion_corpus,
                 "proposed_by": proposed_by,
                 "proposed_relationship": proposed_relationship,
                 "proposed_basis": proposed_basis,
@@ -2531,6 +2594,7 @@ class ProposalModel:
         proposed_basis: Optional[str] = None,
         proposed_specificity: Optional[str] = None,
         proposed_coverage: Optional[str] = None,
+        suggestion_corpus: Optional[str] = None,
     ) -> Optional[int]:
         """
         Create a new-pair proposal where no existing mapping_id exists yet.
@@ -2572,9 +2636,10 @@ class ProposalModel:
                     ke_id, ke_title, wp_id, wp_title,
                     new_pair_connection_type, new_pair_confidence_level,
                     proposed_relationship, proposed_basis,
-                    proposed_specificity, proposed_coverage
+                    proposed_specificity, proposed_coverage,
+                    suggestion_corpus
                 )
-                VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     provider_username or "curator",
@@ -2596,6 +2661,7 @@ class ProposalModel:
                     proposed_basis,
                     proposed_specificity,
                     proposed_coverage,
+                    suggestion_corpus,
                 ),
             )
 

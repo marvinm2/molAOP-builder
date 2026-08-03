@@ -1,4 +1,4 @@
-.PHONY: help install test lint run docker-build docker-run clean capture-versions backfill-versions go-hierarchy go-corpus wp-corpus wp-annotations ke-corpus ke-corpus-refresh ke-metadata
+.PHONY: help install test lint run docker-build docker-run clean capture-versions backfill-versions go-hierarchy go-corpus wp-corpus wp-annotations ke-corpus ke-corpus-refresh ke-metadata check-releases refresh-stale-corpora
 
 help:		## Show this help
 	@echo "Available targets:"
@@ -63,6 +63,12 @@ wp-annotations:	## Refresh data/wikipathways_gene_annotations.json + wikipathway
 
 oecd-status:	## Regenerate data/aop_oecd_status.json from AOP-Wiki RDF SPARQL (run quarterly)
 	python scripts/precompute_oecd_status.py
+
+check-releases:	## Report which upstream sources have released since the deployed corpus was built
+	python scripts/check_source_releases.py
+
+refresh-stale-corpora:	## Rebuild the corpus for every source that has released since (what the weekly cron runs)
+	python scripts/check_source_releases.py --rebuild
 
 capture-versions:	## Refresh data/source_versions.json from WP / GO / Reactome / AOP-Wiki
 	python scripts/capture_source_versions.py

@@ -28,6 +28,7 @@ from src.core.schemas import (
     validate_request_data,
 )
 from src.core.assessment_scoring import recompute_confidence_level
+from src.services.corpus_versions import corpus_version
 from src.core.config_loader import ConfigLoader
 from src.services import source_versions
 from src.utils.text import sanitize_log
@@ -269,6 +270,15 @@ def submit():
         except (ValueError, TypeError):
             suggestion_score = None
 
+        # Record which embedding corpus produced that score. Resolved on the
+        # server rather than sent by the client, for the same reason the
+        # confidence tier is (#237) — and because the client has no way to know
+        # it. None when the corpus predates the manifest; an absent stamp is
+        # visibly absent, a guessed one is not.
+        suggestion_corpus = (
+            corpus_version("wp") if suggestion_score is not None else None
+        )
+
         # Create proposal record (status=pending) — mapping is created only after admin approval.
         # Phase 34 ASMT-02: forward the four assessment fields to the model
         # layer; they persist on the proposals row and are carried into the
@@ -286,6 +296,7 @@ def submit():
             proposed_basis=proposed_basis,
             proposed_specificity=proposed_specificity,
             proposed_coverage=proposed_coverage,
+            suggestion_corpus=suggestion_corpus,
         )
         # Phase 32 H-2 port: the partial-unique index on
         # proposals(ke_id, wp_id) WHERE status='pending' AND mapping_id IS NULL
