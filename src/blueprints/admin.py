@@ -219,6 +219,63 @@ def _resolve_reviewed_assessment(proposal, form, ke_id):
     return answers, confidence, edited, None
 
 
+def _read_admin_go_edits(form, proposal):
+    """Read a reviewer's GO edits off an approve request.
+
+    Returns ``(scores, connection_type, confidence, error)``. ``scores`` is None
+    when the request carries no complete re-score, which is how a bare approval
+    is distinguished from an edited one.
+
+    Extracted from the new-pair branch so the **revision** branch can use it too
+    (#246). #235 gave the review panel an editable GO assessment but wired only
+    the new-pair approve path to read it, so for a GO change proposal the panel
+    posted the reviewer's values and the server silently discarded them — the
+    same "left behind" gap this issue is about, occurring inside GO.
+    """
+    def _parse_int(value):
+        try:
+            return int(value) if value is not None else None
+        except (ValueError, TypeError):
+            return None
+
+    scores = tuple(
+        _parse_int(form.get(key))
+        for key in ("connection_score", "specificity_score", "evidence_score")
+    )
+    if None in scores:
+        scores = None
+
+    connection_type = (form.get("connection_type") or "").strip().lower()
+    if connection_type and connection_type not in GO_CONNECTION_TYPES:
+        return None, None, None, (
+            jsonify({
+                "error": "Invalid connection_type",
+                "allowed": sorted(GO_CONNECTION_TYPES),
+            }),
+            400,
+        )
+
+    confidence = (form.get("confidence_level") or "").strip().lower()
+    if confidence and confidence not in GO_CONFIDENCE_LEVELS:
+        return None, None, None, (
+            jsonify({
+                "error": "Invalid confidence_level",
+                "allowed": sorted(GO_CONFIDENCE_LEVELS),
+            }),
+            400,
+        )
+
+    return scores, connection_type or None, confidence or None, None
+
+
+def _go_config():
+    """The KE-GO scoring block, or None when the container cannot supply it."""
+    try:
+        return current_app.service_container.scoring_config.ke_go_assessment
+    except Exception:
+        return None
+
+
 def _current_assessment(model, table, proposal, columns):
     """The assessment the target mapping holds today, for a revision proposal.
 
@@ -809,6 +866,96 @@ def admin_go_proposal_detail(proposal_id: int):
         return jsonify({"error": "Failed to load GO proposal"}), 500
 
 
+def _approve_go_revision(proposal, proposal_id, mapping_id, admin_username, admin_notes):
+    """Apply an approved GO revision to the mapping it targets.
+
+    Split out of approve_go_proposal to keep that function within the
+    complexity budget the code-quality workflow enforces. The deletion,
+    revision and new-pair paths share only their preamble, so the split
+    falls on a seam that already existed.
+    """
+    approved_at = datetime.utcnow().isoformat()
+    # #245: carry the revision's dimension scores onto the mapping.
+    # Without these the mapping kept the superseded assessment while
+    # advertising the revised tier — the two describing different
+    # judgements. NULL on a legacy revision submitted before #245, and
+    # update_go_mapping leaves the columns untouched on NULL rather
+    # than blanking what is already there.
+    # #246: a reviewer may refine the assessment here too. #235 gave the
+    # panel the controls but wired only the new-pair approve path to read
+    # them, so a GO revision posted the reviewer's values and the server
+    # discarded them.
+    admin_scores, admin_type, admin_confidence, edit_error = (
+        _read_admin_go_edits(request.form, proposal)
+    )
+    if edit_error:
+        return edit_error
+
+    if admin_scores is not None:
+        revised_connection, revised_specificity, revised_evidence = admin_scores
+    else:
+        revised_connection = proposal.get("proposed_connection_score")
+        revised_specificity = proposal.get("proposed_specificity_score")
+        revised_evidence = proposal.get("proposed_evidence_score")
+    revised_scores = (revised_connection, revised_specificity, revised_evidence)
+    scored = all(s is not None for s in revised_scores)
+
+    # An explicit confidence is the last word; otherwise recompute from
+    # whatever scores won above, so the tier and the reasoning agree.
+    revised_confidence = admin_confidence
+    if not revised_confidence and admin_scores is not None:
+        go_config = _go_config()
+        if go_config is not None:
+            revised_confidence = _compute_confidence_from_dimensions(
+                *admin_scores, go_config
+            )
+    if not revised_confidence:
+        revised_confidence = proposal.get("proposed_confidence")
+
+    if admin_scores is not None or admin_type or admin_confidence:
+        logger.info(
+            "GO proposal %s assessment edited at review by %s",
+            sanitize_log(proposal_id), sanitize_log(admin_username),
+        )
+
+    # NB: no updated_by — the ke_go_mappings schema has no such column
+    # (unlike WP mappings); attribution rides on approved_by_curator.
+    success = go_mapping_model.update_go_mapping(
+        mapping_id=mapping_id,
+        connection_type=admin_type or proposal.get("proposed_connection_type"),
+        confidence_level=revised_confidence,
+        approved_by_curator=admin_username,
+        approved_at_curator=approved_at,
+        proposed_by=proposal.get("provider_username"),
+        connection_score=revised_connection,
+        specificity_score=revised_specificity,
+        evidence_score=revised_evidence,
+        # Only a fully scored revision earns 'v2'; a legacy one leaves
+        # the column alone rather than claiming an assessment it has
+        # no answers for. Matches the GO new-pair rule (all three set).
+        assessment_version="v2" if scored else None,
+        # A revision approval re-confirms the mapping against the
+        # snapshot the reviewer was looking at, as the WP path does.
+        **_source_version_fields("go"),
+    )
+    if not success:
+        return jsonify({"error": "Failed to update GO mapping"}), 500
+    go_proposal_model.update_go_proposal_status(
+        proposal_id=proposal_id,
+        status="approved",
+        admin_username=admin_username,
+        admin_notes=admin_notes,
+    )
+    logger.info(
+        "GO proposal %s approved by %s, mapping %s updated",
+        sanitize_log(proposal_id), sanitize_log(admin_username), sanitize_log(mapping_id),
+    )
+    return jsonify({
+        "message": "GO proposal approved successfully. Mapping updated.",
+        "action": "updated",
+    }), 200
+
+
 @admin_bp.route("/go-proposals/<int:proposal_id>/approve", methods=["POST"])
 @admin_required
 @submission_rate_limit
@@ -875,55 +1022,9 @@ def approve_go_proposal(proposal_id: int):
             }), 200
 
         if mapping_id:
-            approved_at = datetime.utcnow().isoformat()
-            # #245: carry the revision's dimension scores onto the mapping.
-            # Without these the mapping kept the superseded assessment while
-            # advertising the revised tier — the two describing different
-            # judgements. NULL on a legacy revision submitted before #245, and
-            # update_go_mapping leaves the columns untouched on NULL rather
-            # than blanking what is already there.
-            revised_connection = proposal.get("proposed_connection_score")
-            revised_specificity = proposal.get("proposed_specificity_score")
-            revised_evidence = proposal.get("proposed_evidence_score")
-            revised_scores = (revised_connection, revised_specificity, revised_evidence)
-            scored = all(s is not None for s in revised_scores)
-
-            # NB: no updated_by — the ke_go_mappings schema has no such column
-            # (unlike WP mappings); attribution rides on approved_by_curator.
-            success = go_mapping_model.update_go_mapping(
-                mapping_id=mapping_id,
-                connection_type=proposal.get("proposed_connection_type"),
-                confidence_level=proposal.get("proposed_confidence"),
-                approved_by_curator=admin_username,
-                approved_at_curator=approved_at,
-                proposed_by=proposal.get("provider_username"),
-                connection_score=revised_connection,
-                specificity_score=revised_specificity,
-                evidence_score=revised_evidence,
-                # Only a fully scored revision earns 'v2'; a legacy one leaves
-                # the column alone rather than claiming an assessment it has
-                # no answers for. Matches the GO new-pair rule (all three set).
-                assessment_version="v2" if scored else None,
-                # A revision approval re-confirms the mapping against the
-                # snapshot the reviewer was looking at, as the WP path does.
-                **_source_version_fields("go"),
+            return _approve_go_revision(
+                proposal, proposal_id, mapping_id, admin_username, admin_notes
             )
-            if not success:
-                return jsonify({"error": "Failed to update GO mapping"}), 500
-            go_proposal_model.update_go_proposal_status(
-                proposal_id=proposal_id,
-                status="approved",
-                admin_username=admin_username,
-                admin_notes=admin_notes,
-            )
-            logger.info(
-                "GO proposal %s approved by %s, mapping %s updated",
-                sanitize_log(proposal_id), sanitize_log(admin_username), sanitize_log(mapping_id),
-            )
-            return jsonify({
-                "message": "GO proposal approved successfully. Mapping updated.",
-                "action": "updated",
-            }), 200
 
         # New-pair proposal (mapping_id IS NULL)
         approved_at = datetime.utcnow().isoformat()
