@@ -17,6 +17,7 @@ from src.blueprints.admin import _get_admin_users
 from src.exporters.gmt_exporter import export_revision_id, gmt_provenance_header
 from src.services.monitoring import monitor_performance
 from src.utils.text import sanitize_log
+from src.exporters.licence import DATASET_LICENCE_SHORT
 
 logger = logging.getLogger(__name__)
 
@@ -293,7 +294,7 @@ def download():
         output.write(
             f"# Description: Curated mappings between Key Events and WikiPathways with confidence assessments\n"
         )
-        output.write(f"# License: CC0 - Public Domain\n")
+        output.write(f"# License: {DATASET_LICENCE_SHORT}\n")
         output.write(f"# Repository: https://github.com/marvinm2/molAOP-builder\n")
         output.write(f"# Contact: Generated from the Molecular AOP Builder\n")
         output.write(f"#\n")
