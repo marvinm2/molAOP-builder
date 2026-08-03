@@ -139,7 +139,7 @@ def remove_directionality_terms(text: str) -> str:
         cleaned_text = re.sub(pattern, ' ', cleaned_text, flags=re.IGNORECASE)
 
     # Clean up extra spaces and normalize
-    cleaned_text = re.sub(r'\s+', ' ', cleaned_text).strip()
+    cleaned_text = _tidy_separators(cleaned_text)
 
     # If we removed too much (less than 30% of original), return a more conservative cleaning
     if len(cleaned_text) < len(text) * 0.3:
@@ -152,9 +152,29 @@ def remove_directionality_terms(text: str) -> str:
         cleaned_text = text
         for pattern in conservative_terms:
             cleaned_text = re.sub(pattern, ' ', cleaned_text, flags=re.IGNORECASE)
-        cleaned_text = re.sub(r'\s+', ' ', cleaned_text).strip()
+        cleaned_text = _tidy_separators(cleaned_text)
 
     return cleaned_text if cleaned_text else text
+
+
+def _tidy_separators(text: str) -> str:
+    """Collapse whitespace and drop the debris the stripping left behind.
+
+    AOP-Wiki titles are overwhelmingly ``<direction>, <entity>``, so removing
+    the direction word leaves the comma: ``"Activation, AhR"`` became
+    ``", AhR"``, and that string — leading comma and all — was what got
+    embedded (#236). The other shape is ``<direction> of <entity>``, which
+    left a stray preposition.
+
+    Both are grammatical debris from the removal rather than content, and the
+    docstring above has always documented them as removed. This is the code
+    catching up to its stated contract, not a change of intent.
+    """
+    text = re.sub(r'\s+', ' ', text).strip()
+    text = text.strip(' ,;:-–—').strip()
+    # Only a leading connector, and only when something follows it.
+    text = re.sub(r'^(?:of|in|to|by|the|a|an)\s+(?=\S)', '', text, flags=re.IGNORECASE)
+    return text.strip(' ,;:-–—').strip()
 
 
 def detect_go_direction(go_name: str) -> str:
