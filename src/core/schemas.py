@@ -62,6 +62,12 @@ def connection_type_for_relationship(relationship):
 # before the live mapping is written.
 GO_CONNECTION_TYPES = ("describes", "involves", "related", "context")
 GO_CONFIDENCE_LEVELS = ("low", "medium", "high")
+# The three KE-GO assessment dimensions are scored High/Medium/Low = 3/2/1, in
+# the submitter form (static/js/main.js) and the reviewer panel
+# (static/js/admin_proposals.js) alike. Named here so the revision schema can
+# validate against the range a curator can actually express (#245); the column
+# comments say 0-3, but nothing has ever offered a 0.
+GO_DIMENSION_SCORES = (1, 2, 3)
 
 
 class GoNamespaceField(fields.Field):
@@ -308,21 +314,39 @@ class _MappingChangeProposalSchema(Schema):
 
 
 class GoProposalChangeSchema(_MappingChangeProposalSchema):
-    """Schema for KE-GO change/deletion proposals (issue #197).
+    """Schema for KE-GO change/deletion proposals (#197, reworked for #245).
 
-    GO mappings carry a confidence level and a connection type, so both are
-    revisable in addition to deletion.
+    A GO revision asks what creating a GO mapping asks — a connection type plus
+    the three dimension scores — and the tier is derived from them, matching how
+    the KE-WP path derives its tier from four answers. GO's instrument is its
+    own: three weighted dimensions and a four-term connection vocabulary, not
+    the WP four-question form. Aligning the two *interfaces* does not mean
+    merging the two *instruments*.
+
+    This replaces a ``changeType`` that validated against the **WikiPathways**
+    vocabulary (``causative``/``responsive``/``undefined``) — none of which is a
+    valid GO connection type — so a GO revision could not propose a valid
+    connection type at all, and could propose three invalid ones.
     """
 
     _id_field = "go_id"
     _id_aliases = ("go_id", "GOID")
 
-    changeConfidence = fields.Str(
-        missing="", validate=validate.OneOf(["", "low", "medium", "high"])
-    )
     changeType = fields.Str(
         missing="",
-        validate=validate.OneOf(["", "causative", "responsive", "undefined"]),
+        validate=validate.OneOf([""] + list(GO_CONNECTION_TYPES)),
+    )
+    connection_score = fields.Int(
+        required=False, allow_none=True,
+        validate=validate.OneOf(GO_DIMENSION_SCORES),
+    )
+    specificity_score = fields.Int(
+        required=False, allow_none=True,
+        validate=validate.OneOf(GO_DIMENSION_SCORES),
+    )
+    evidence_score = fields.Int(
+        required=False, allow_none=True,
+        validate=validate.OneOf(GO_DIMENSION_SCORES),
     )
 
 

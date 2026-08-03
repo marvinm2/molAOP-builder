@@ -3298,6 +3298,14 @@ class GoMappingModel(MappingCountsMixin):
         # Phase C — source-data versioning kwargs; nullable, stamped at approval.
         go_release_date: Optional[str] = None,
         aopwiki_snapshot_date: Optional[str] = None,
+        # #245 — the three dimension scores carried from an approved revision,
+        # so the mapping's stored reasoning describes the revision rather than
+        # the state it superseded. NULL leaves the column untouched, which is
+        # what a deletion or a provenance-only update wants.
+        connection_score: Optional[int] = None,
+        specificity_score: Optional[int] = None,
+        evidence_score: Optional[int] = None,
+        assessment_version: Optional[str] = None,
     ) -> bool:
         """
         Update an existing KE-GO mapping.
@@ -3315,6 +3323,10 @@ class GoMappingModel(MappingCountsMixin):
             "proposed_by": "proposed_by",
             "go_release_date": "go_release_date",
             "aopwiki_snapshot_date": "aopwiki_snapshot_date",
+            "connection_score": "connection_score",
+            "specificity_score": "specificity_score",
+            "evidence_score": "evidence_score",
+            "assessment_version": "assessment_version",
         }
 
         conn = self.db.get_connection()
@@ -3332,6 +3344,10 @@ class GoMappingModel(MappingCountsMixin):
                 "proposed_by": proposed_by,
                 "go_release_date": go_release_date,
                 "aopwiki_snapshot_date": aopwiki_snapshot_date,
+                "connection_score": connection_score,
+                "specificity_score": specificity_score,
+                "evidence_score": evidence_score,
+                "assessment_version": assessment_version,
             }
 
             for field_name, field_value in update_data.items():
@@ -3576,6 +3592,9 @@ class GoProposalModel:
         ke_title: str = None,
         go_id: str = None,
         go_name: str = None,
+        proposed_connection_score: int = None,
+        proposed_specificity_score: int = None,
+        proposed_evidence_score: int = None,
     ) -> Optional[int]:
         """Create a change/deletion proposal against an existing GO mapping.
 
@@ -3583,6 +3602,11 @@ class GoProposalModel:
         approve_go_proposal() applies the change to that mapping rather than
         creating a new one. The ke_id/go_id display fields are stored so the
         admin review queue can render the proposal without re-joining.
+
+        #245: the three dimension scores are stored on the revision too, so a
+        correction records the reasoning behind its tier rather than only the
+        tier. The columns already existed for the new-pair path; this path
+        simply never wrote them.
         """
         proposal_uuid = str(uuid_lib.uuid4())
         conn = self.db.get_connection()
@@ -3592,8 +3616,11 @@ class GoProposalModel:
                 INSERT INTO ke_go_proposals (mapping_id, user_name, user_email, user_affiliation,
                                             provider_username, proposed_delete, proposed_confidence,
                                             proposed_connection_type, uuid,
-                                            ke_id, ke_title, go_id, go_name)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                            ke_id, ke_title, go_id, go_name,
+                                            proposed_connection_score,
+                                            proposed_specificity_score,
+                                            proposed_evidence_score)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
                 (
                     mapping_id,
@@ -3609,6 +3636,9 @@ class GoProposalModel:
                     ke_title,
                     go_id,
                     go_name,
+                    proposed_connection_score,
+                    proposed_specificity_score,
+                    proposed_evidence_score,
                 ),
             )
 

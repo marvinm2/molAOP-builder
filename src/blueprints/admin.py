@@ -15,6 +15,7 @@ from src.utils.text import sanitize_log
 
 from src.services.monitoring import monitor_performance
 from src.services.rate_limiter import submission_rate_limit
+from src.core.assessment_scoring import compute_go_confidence
 from src.core.schemas import (
     GO_CONFIDENCE_LEVELS,
     GO_CONNECTION_TYPES,
@@ -103,34 +104,17 @@ def set_models(proposal, mapping, guest_code=None, go_mapping=None, go_proposal=
 
 
 def _compute_confidence_from_dimensions(conn_score, spec_score, ev_score, ke_go_config):
+    """Compute the KE-GO confidence tier from three dimension scores.
+
+    Thin wrapper over ``compute_go_confidence``; the arithmetic moved to
+    ``src/core/assessment_scoring.py`` when the revision path gained a second
+    server-side writer (#245), so approval and submission cannot disagree about
+    what 3/3/2 means.
+
+    Callers here always pass three scores, so the shared function's "incomplete"
+    return is not reachable from this path.
     """
-    Compute confidence level (high/medium/low) from three dimension scores.
-
-    Uses dimension_weights from ke_go_config to compute a weighted average,
-    then maps to H/M/L using dimension_thresholds.
-
-    Args:
-        conn_score: Connection score (integer, 0-3)
-        spec_score: Specificity score (integer, 0-3)
-        ev_score: Evidence score (integer, 0-3)
-        ke_go_config: KEGoAssessmentConfig instance with dimension_weights and dimension_thresholds
-
-    Returns:
-        str: 'high', 'medium', or 'low'
-    """
-    w = ke_go_config.dimension_weights
-    weighted_avg = (
-        conn_score * w['connection']
-        + spec_score * w['specificity']
-        + ev_score * w['evidence']
-    )
-    thresholds = ke_go_config.dimension_thresholds
-    if weighted_avg >= thresholds['high']:
-        return 'high'
-    elif weighted_avg >= thresholds['medium']:
-        return 'medium'
-    else:
-        return 'low'
+    return compute_go_confidence(conn_score, spec_score, ev_score, ke_go_config)
 
 
 def login_required(f):
@@ -689,6 +673,18 @@ def approve_go_proposal(proposal_id: int):
 
         if mapping_id:
             approved_at = datetime.utcnow().isoformat()
+            # #245: carry the revision's dimension scores onto the mapping.
+            # Without these the mapping kept the superseded assessment while
+            # advertising the revised tier — the two describing different
+            # judgements. NULL on a legacy revision submitted before #245, and
+            # update_go_mapping leaves the columns untouched on NULL rather
+            # than blanking what is already there.
+            revised_connection = proposal.get("proposed_connection_score")
+            revised_specificity = proposal.get("proposed_specificity_score")
+            revised_evidence = proposal.get("proposed_evidence_score")
+            revised_scores = (revised_connection, revised_specificity, revised_evidence)
+            scored = all(s is not None for s in revised_scores)
+
             # NB: no updated_by — the ke_go_mappings schema has no such column
             # (unlike WP mappings); attribution rides on approved_by_curator.
             success = go_mapping_model.update_go_mapping(
@@ -698,6 +694,16 @@ def approve_go_proposal(proposal_id: int):
                 approved_by_curator=admin_username,
                 approved_at_curator=approved_at,
                 proposed_by=proposal.get("provider_username"),
+                connection_score=revised_connection,
+                specificity_score=revised_specificity,
+                evidence_score=revised_evidence,
+                # Only a fully scored revision earns 'v2'; a legacy one leaves
+                # the column alone rather than claiming an assessment it has
+                # no answers for. Matches the GO new-pair rule (all three set).
+                assessment_version="v2" if scored else None,
+                # A revision approval re-confirms the mapping against the
+                # snapshot the reviewer was looking at, as the WP path does.
+                **_source_version_fields("go"),
             )
             if not success:
                 return jsonify({"error": "Failed to update GO mapping"}), 500

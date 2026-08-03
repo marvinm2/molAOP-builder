@@ -64,6 +64,11 @@ def revision_client():
 
     flask_app.config["TESTING"] = True
     flask_app.config["WTF_CSRF_ENABLED"] = False
+    # The submission rate limiter keys off DATABASE_PATH. Without pointing it
+    # at this test's own DB it accumulates across the whole session, so these
+    # tests would 429 rather than assert what they mean to.
+    original_db_path = flask_app.config.get("DATABASE_PATH")
+    flask_app.config["DATABASE_PATH"] = db_path
 
     with flask_app.test_client() as test_client:
         with flask_app.app_context():
@@ -77,6 +82,7 @@ def revision_client():
     (api_mod.proposal_model, api_mod.mapping_model, api_mod.cache_model,
      api_mod.ke_metadata_index, admin_mod.proposal_model,
      admin_mod.mapping_model) = originals
+    flask_app.config["DATABASE_PATH"] = original_db_path
 
     os.close(fd)
     os.unlink(db_path)
