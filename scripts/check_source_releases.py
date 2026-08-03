@@ -65,6 +65,11 @@ logger = logging.getLogger("source-releases")
 
 PROJECT_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 STORED_PATH = os.path.join(PROJECT_ROOT, "data", "source_versions.json")
+# Written when a rebuild actually replaced something, and consumed by whatever
+# restarts the service. The app reads its artifacts at startup, so a rebuilt
+# corpus is not live until it restarts — but restarting on a fixed schedule
+# regardless would drop curator sessions on every week that nothing changed.
+REBUILT_MARKER = os.path.join(PROJECT_ROOT, "data", ".corpus-rebuilt")
 
 # What to rebuild when a source moves, and which artifacts that rebuild
 # rewrites. The artifact list is what the writability preflight checks.
@@ -200,6 +205,33 @@ def rebuild(source):
     return True
 
 
+def write_rebuilt_marker(sources):
+    """Record that these sources were rebuilt and the service needs restarting.
+
+    Deliberately additive: if a marker is already present from an earlier run
+    that has not been applied yet, the new sources are merged in rather than
+    replacing it. Two rebuilds between two restarts must not lose the first
+    one's entry, or the restart would be skipped for a corpus that did change.
+    """
+    existing = []
+    if os.path.exists(REBUILT_MARKER):
+        try:
+            with open(REBUILT_MARKER, "r", encoding="utf-8") as fh:
+                existing = json.load(fh).get("sources", [])
+        except Exception:
+            pass
+    merged = sorted(set(existing) | set(sources))
+    try:
+        with open(REBUILT_MARKER, "w", encoding="utf-8") as fh:
+            json.dump({"sources": merged}, fh)
+        logger.info(
+            "Wrote %s — the service needs a restart to serve the new corpus",
+            REBUILT_MARKER,
+        )
+    except Exception as e:
+        logger.warning("Could not write the rebuilt marker: %s", e)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -262,6 +294,8 @@ def main():
         logger.error("Rebuild failed for: %s. Leaving the stored manifest "
                      "untouched so the drift is reported again.", ", ".join(failed))
         return 3
+
+    write_rebuilt_marker(drifted)
 
     logger.info("Refreshing %s", STORED_PATH)
     proc = subprocess.run(
