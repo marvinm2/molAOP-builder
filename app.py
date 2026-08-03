@@ -195,6 +195,7 @@ def create_app(config_name: str = None):
         go_mapping=services.go_mapping_model,
         go_proposal=services.go_proposal_model,
         ke_meta=services.ke_metadata,
+        ke_meta_index=services.ke_metadata_index,
         pathway_meta=services.pathway_metadata,
         ke_aop_membership_data=services.ke_aop_membership,
         reactome_suggestion_svc=services.reactome_suggestion_service,

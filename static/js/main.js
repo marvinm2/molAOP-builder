@@ -1640,8 +1640,16 @@ class KEWPApp {
             this.removeKEContextPanel();
         }
 
-        // Store biological level for later use in assessment
-        this.selectedBiolevel = biolevel;
+        // Store biological level for later use in assessment.
+        // Only overwrite when the dropdown actually resolved an option (#237).
+        // restoreFormState() waits on the pathway options but not the KE ones,
+        // so a restored form can trigger 'change' while #ke_id still holds the
+        // disabled placeholder — data('biolevel') is then undefined and a blind
+        // assignment wipes the level that was just restored, dropping the +1.0
+        // bonus and previewing one tier low.
+        if (biolevel || !keId) {
+            this.selectedBiolevel = biolevel;
+        }
 
         // Store selected KE info for assessment info cards (#103)
         this.selectedKEInfo = keId ? { keId, title, biolevel } : null;
