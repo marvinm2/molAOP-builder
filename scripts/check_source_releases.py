@@ -297,10 +297,18 @@ def main():
 
     write_rebuilt_marker(drifted)
 
-    logger.info("Refreshing %s", STORED_PATH)
-    proc = subprocess.run(
-        ["python", "scripts/capture_source_versions.py"], cwd=PROJECT_ROOT
-    )
+    # Advance the stored manifest ONLY for sources genuinely rebuilt. A bare
+    # capture_source_versions.py rewrites all four entries regardless of what
+    # this run touched, so a partial run (`--only aopwiki`, or one source
+    # failing while others succeed) would record versions whose corpora were
+    # never rebuilt — suppressing the next alert and making that drift
+    # permanently invisible. Passing --source per rebuilt source makes the
+    # capture script merge into the existing manifest instead of replacing it.
+    logger.info("Refreshing %s for: %s", STORED_PATH, ", ".join(drifted))
+    capture_cmd = ["python", "scripts/capture_source_versions.py"]
+    for source in drifted:
+        capture_cmd += ["--source", source]
+    proc = subprocess.run(capture_cmd, cwd=PROJECT_ROOT)
     if proc.returncode != 0:
         logger.warning(
             "Rebuilds succeeded but capture_source_versions.py exited %d — the "

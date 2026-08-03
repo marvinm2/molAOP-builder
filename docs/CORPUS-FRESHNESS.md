@@ -67,6 +67,15 @@ immediately, so an interrupted write used to leave a partial file — and for
 `ke_metadata.json`, a truncated file silently removes Key Events from curation.
 A human running a rebuild sees the traceback; a cron does not.
 
+> [!warning] The manifest must only advance for what was actually rebuilt
+> `capture_source_versions.py` with no arguments rewrites **every** entry. A
+> run that rebuilt one source would then record current versions for all four,
+> and the three untouched corpora would never be reported as drifted again.
+> The watcher passes `--source` per rebuilt source so the capture script merges
+> instead of replacing. Same class of failure as advancing past a *failed*
+> rebuild — both make drift permanently invisible, which is the one outcome
+> worse than not checking at all.
+
 ## The manifest, and why scores carry a corpus
 
 Every rebuild records itself in `data/corpus_manifest.json`:
