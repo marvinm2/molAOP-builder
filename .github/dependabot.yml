@@ -5,6 +5,23 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    ignore:
+      # torch is pinned to a +cpu local version (torch==2.8.0+cpu) served from
+      # the CPU wheel index. Dependabot cannot see that and proposes the plain
+      # PyPI version, which is not a version bump but a change of wheel: the
+      # default build pulls the CUDA runtime onto CPU-only Swarm nodes and adds
+      # gigabytes to the image. Bump torch by hand, keeping the suffix and the
+      # index URL. (Proposed twice already — see PR #127 and PR #249.)
+      - dependency-name: "torch"
+      # A transformers major can change tokenisation or pooling, and therefore
+      # the vectors themselves. The precomputed .npz artifacts live on the
+      # GlusterFS mount rather than in the image, so neither the test suite nor
+      # CI can see a mismatch between stored vectors and live-encoded queries —
+      # they simply stop occupying the same space, and every similarity becomes
+      # quietly meaningless. Take a major only bundled with a full re-embed;
+      # minor and patch still flow through normally.
+      - dependency-name: "transformers"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
