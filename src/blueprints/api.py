@@ -619,6 +619,12 @@ def submit_proposal():
     Handles proposal submission from the explore page modal form.
     Proposals are stored in the database with status 'pending' for admin review.
 
+    #245: a revision carries the same four assessment answers as a creation and
+    the confidence tier is derived from them here, exactly as /submit does.
+    There is no longer a direct High/Medium/Low control — a revision was the one
+    path that could move a mapping between tiers with no recorded reasoning, on
+    the mappings least well understood in the first place.
+
     Returns:
         JSON response with success/error message
     """
@@ -630,9 +636,15 @@ def submit_proposal():
             "userEmail": request.form.get("userEmail"),
             "userAffiliation": request.form.get("userAffiliation"),
             "deleteEntry": request.form.get("deleteEntry", ""),
-            "changeConfidence": request.form.get("changeConfidence", ""),
-            "changeType": request.form.get("changeType", ""),
         }
+        # An unanswered question arrives as "" from an unchecked radio group.
+        # Omit those so Marshmallow's optional-field semantics fire, rather than
+        # failing OneOf on the empty string — a deletion proposal legitimately
+        # answers none of the four.
+        for key in ("step1", "step2", "step3", "step4"):
+            value = request.form.get(key)
+            if value:
+                proposal_data[key] = value
 
         # Debug logging
         logger.info("Proposal submission data: %s", sanitize_log(str(proposal_data)))
@@ -656,8 +668,42 @@ def submit_proposal():
 
         # Extract proposed changes
         proposed_delete = validated_data["deleteEntry"] == "on"
-        proposed_confidence = validated_data.get("changeConfidence") or None
-        proposed_connection_type = validated_data.get("changeType") or None
+
+        # #245: the assessment answers, renamed to the DB column names exactly
+        # as /submit does. A deletion proposes no assessment; anything else must
+        # carry the full four, since a partially answered revision would store a
+        # tier derived from a score the curator never completed.
+        def _answer(key):
+            value = validated_data.get(key)
+            # Already whitelisted by OneOf; sanitize_string is defence in depth,
+            # matching /submit.
+            return SecurityValidation.sanitize_string(value) if value else None
+
+        proposed_relationship = _answer("step1")
+        proposed_basis = _answer("step2")
+        proposed_specificity = _answer("step3")
+        proposed_coverage = _answer("step4")
+        answers = (
+            proposed_relationship, proposed_basis,
+            proposed_specificity, proposed_coverage,
+        )
+
+        if not proposed_delete:
+            if not all(answers):
+                return (
+                    jsonify({
+                        "error": "A revision must answer all four assessment "
+                                 "questions, or propose a deletion.",
+                    }),
+                    400,
+                )
+        elif any(answers):
+            # A deletion makes no assertion about confidence; accepting answers
+            # alongside it would store reasoning for a mapping about to vanish.
+            return (
+                jsonify({"error": "A deletion proposal carries no assessment."}),
+                400,
+            )
 
         # Additional email domain validation
         if not SecurityValidation.validate_email_domain(user_email):
@@ -692,6 +738,39 @@ def submit_proposal():
         # Get current user
         provider_username = session.get("user", {}).get("username", "unknown")
 
+        # #245: derive the tier from the answers rather than accepting one, so
+        # there is a single instrument for setting confidence.
+        proposed_confidence = None
+        if not proposed_delete:
+            proposed_confidence = _recompute_wp_confidence(
+                ke_id=ke_id,
+                basis=proposed_basis,
+                specificity=proposed_specificity,
+                coverage=proposed_coverage,
+                submitted_level=None,
+            )
+            if not proposed_confidence:
+                # Scoring returns nothing when the Key Event is absent from the
+                # metadata snapshot, which happens whenever the snapshot lags
+                # AOP-Wiki (#239). On the new-pair path the browser's own tier
+                # stands in; a revision has no submitted tier to fall back to,
+                # so storing the assessment anyway would record four answers
+                # against a tier that never moves. Refuse, and say why.
+                logger.warning(
+                    "Refusing revision for %s: confidence not derivable "
+                    "(KE missing from the metadata snapshot?)",
+                    sanitize_log(ke_id),
+                )
+                return (
+                    jsonify({
+                        "error": "Could not derive a confidence level for this "
+                                 "Key Event. Its biological level is missing "
+                                 "from the current snapshot, so the assessment "
+                                 "cannot be scored.",
+                    }),
+                    409,
+                )
+
         # Create proposal in database
         proposal_id = proposal_model.create_proposal(
             mapping_id=mapping_id,
@@ -700,10 +779,11 @@ def submit_proposal():
             user_affiliation=user_affiliation,
             provider_username=provider_username,
             proposed_delete=proposed_delete,
-            proposed_confidence=proposed_confidence if proposed_confidence else None,
-            proposed_connection_type=proposed_connection_type
-            if proposed_connection_type
-            else None,
+            proposed_confidence=proposed_confidence,
+            proposed_relationship=proposed_relationship,
+            proposed_basis=proposed_basis,
+            proposed_specificity=proposed_specificity,
+            proposed_coverage=proposed_coverage,
         )
 
         if proposal_id:

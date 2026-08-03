@@ -55,6 +55,7 @@ def connection_type_for_relationship(relationship):
         return None
     return RELATIONSHIP_TO_CONNECTION_TYPE.get(relationship, "undefined")
 
+
 # KE-GO uses its own connection vocabulary (not the KE-WP one above) and the shared
 # confidence tiers. Defined once here because two writers validate against them: the
 # submit schema below, and the admin approve route, where a reviewer may refine both
@@ -75,7 +76,54 @@ class GoNamespaceField(fields.Field):
         return _GO_NAMESPACE_MAP[value]
 
 
-class MappingSchema(Schema):
+class KEWPAssessmentAnswersMixin(Schema):
+    """The four KE-WP assessment answers, as optional fields.
+
+    Inherited by both the new-pair submit schema and the revision-proposal
+    schema (#245) so the two cannot drift: a correction is the same judgement
+    as a creation and must be validated against the same whitelists.
+
+    Optional on both paths, for different reasons. On creation, absence means a
+    legacy v1 submission from a non-UI form-poster. On revision, a deletion
+    proposal asserts nothing about confidence and so answers nothing; the
+    handler requires the four only when a revision actually proposes a change.
+    """
+
+    step1 = fields.Str(
+        required=False,
+        allow_none=True,
+        validate=validate.OneOf(
+            list(KE_WP_RELATIONSHIP_OPTIONS),
+            error="Invalid step1 option (relationship)",
+        ),
+    )
+    step2 = fields.Str(
+        required=False,
+        allow_none=True,
+        validate=validate.OneOf(
+            list(KE_WP_BASIS_OPTIONS),
+            error="Invalid step2 option (basis)",
+        ),
+    )
+    step3 = fields.Str(
+        required=False,
+        allow_none=True,
+        validate=validate.OneOf(
+            list(KE_WP_SPECIFICITY_OPTIONS),
+            error="Invalid step3 option (specificity)",
+        ),
+    )
+    step4 = fields.Str(
+        required=False,
+        allow_none=True,
+        validate=validate.OneOf(
+            list(KE_WP_COVERAGE_OPTIONS),
+            error="Invalid step4 option (coverage)",
+        ),
+    )
+
+
+class MappingSchema(KEWPAssessmentAnswersMixin):
     """Schema for KE-WP mapping submissions.
 
     Phase 34 ASMT-02 option-key whitelists (canonical, mirrored from
@@ -128,49 +176,23 @@ class MappingSchema(Schema):
             ["low", "medium", "high"], error="Invalid confidence level"
         ),
     )
-    # Phase 34 ASMT-02: four assessment-question answers from the mapper UI.
-    # Sent as step1..step4 in the form payload to preserve JS-side naming
-    # (per 34-RESEARCH.md Open Question 2 — keep JS form keys, map at the
-    # schema layer). The DB columns are proposed_relationship/basis/
-    # specificity/coverage; the /submit handler does the rename when
-    # forwarding to the model. Optional for backward-compat with any
-    # non-UI form-poster; absence yields a v1 (legacy) mapping.
-    step1 = fields.Str(
-        required=False,
-        allow_none=True,
-        validate=validate.OneOf(
-            list(KE_WP_RELATIONSHIP_OPTIONS),
-            error="Invalid step1 option (relationship)",
-        ),
-    )
-    step2 = fields.Str(
-        required=False,
-        allow_none=True,
-        validate=validate.OneOf(
-            list(KE_WP_BASIS_OPTIONS),
-            error="Invalid step2 option (basis)",
-        ),
-    )
-    step3 = fields.Str(
-        required=False,
-        allow_none=True,
-        validate=validate.OneOf(
-            list(KE_WP_SPECIFICITY_OPTIONS),
-            error="Invalid step3 option (specificity)",
-        ),
-    )
-    step4 = fields.Str(
-        required=False,
-        allow_none=True,
-        validate=validate.OneOf(
-            list(KE_WP_COVERAGE_OPTIONS),
-            error="Invalid step4 option (coverage)",
-        ),
-    )
+    # step1..step4 come from KEWPAssessmentAnswersMixin — the same four fields
+    # the revision path validates against, so creating and correcting a mapping
+    # cannot drift apart (#245).
 
 
-class ProposalSchema(Schema):
-    """Schema for proposal submissions"""
+class ProposalSchema(KEWPAssessmentAnswersMixin):
+    """Schema for KE-WP revision/deletion proposals.
+
+    #245: a revision carries the same four assessment answers as a creation
+    (``step1..step4``, renamed to ``proposed_relationship/basis/specificity/
+    coverage`` by the handler) and the tier is *derived* from them server-side.
+    There is no direct confidence control — a tier asserted without stated
+    grounds is not reviewable, which is the whole point of the assessment.
+
+    A deletion proposal makes no assertion about confidence and so carries no
+    answers; the handler requires the assessment only for a non-deletion.
+    """
 
     entry = fields.Str(required=True)  # JSON string of entry data
     userName = fields.Str(
@@ -188,13 +210,6 @@ class ProposalSchema(Schema):
         required=True, validate=validate.Length(min=1, max=200)
     )
     deleteEntry = fields.Str(missing="", validate=validate.OneOf(["", "on"]))
-    changeConfidence = fields.Str(
-        missing="", validate=validate.OneOf(["", "low", "medium", "high"])
-    )
-    changeType = fields.Str(
-        missing="",
-        validate=validate.OneOf(["", "causative", "responsive", "undefined"]),
-    )
 
     @validates("entry")
     def validate_entry_json(self, value):
