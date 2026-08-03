@@ -2770,7 +2770,14 @@ class ProposalModel:
                 SELECT p.*, m.ke_id as mapping_ke_id, m.ke_title as mapping_ke_title,
                        m.wp_id as mapping_wp_id, m.wp_title as mapping_wp_title,
                        m.connection_type as current_connection_type,
-                       m.confidence_level as current_confidence_level
+                       m.confidence_level as current_confidence_level,
+                       -- #247: what a revision replaces, so the review panel can
+                       -- mark which answers actually moved. NULL for a new pair.
+                       m.proposed_relationship as current_relationship,
+                       m.proposed_basis as current_basis,
+                       m.proposed_specificity as current_specificity,
+                       m.proposed_coverage as current_coverage,
+                       m.assessment_version as current_assessment_version
                 FROM proposals p
                 LEFT JOIN mappings m ON p.mapping_id = m.id
             """
@@ -2804,7 +2811,14 @@ class ProposalModel:
                 SELECT p.*, m.ke_id as mapping_ke_id, m.ke_title as mapping_ke_title,
                        m.wp_id as mapping_wp_id, m.wp_title as mapping_wp_title,
                        m.connection_type as current_connection_type,
-                       m.confidence_level as current_confidence_level
+                       m.confidence_level as current_confidence_level,
+                       -- #247: what a revision replaces, so the review panel can
+                       -- mark which answers actually moved. NULL for a new pair.
+                       m.proposed_relationship as current_relationship,
+                       m.proposed_basis as current_basis,
+                       m.proposed_specificity as current_specificity,
+                       m.proposed_coverage as current_coverage,
+                       m.assessment_version as current_assessment_version
                 FROM proposals p
                 LEFT JOIN mappings m ON p.mapping_id = m.id
                 WHERE p.id = ?
@@ -3754,7 +3768,12 @@ class GoProposalModel:
                        m.ke_id as mapping_ke_id, m.ke_title as mapping_ke_title,
                        m.go_id as mapping_go_id, m.go_name as mapping_go_name,
                        m.connection_type as current_connection_type,
-                       m.confidence_level as current_confidence_level
+                       m.confidence_level as current_confidence_level,
+                       -- #247: GO's own three dimensions, for the same comparison.
+                       m.connection_score as current_connection_score,
+                       m.specificity_score as current_specificity_score,
+                       m.evidence_score as current_evidence_score,
+                       m.assessment_version as current_assessment_version
                 FROM ke_go_proposals p
                 LEFT JOIN ke_go_mappings m ON p.mapping_id = m.id
             """
@@ -3779,7 +3798,12 @@ class GoProposalModel:
                        m.ke_id as mapping_ke_id, m.ke_title as mapping_ke_title,
                        m.go_id as mapping_go_id, m.go_name as mapping_go_name,
                        m.connection_type as current_connection_type,
-                       m.confidence_level as current_confidence_level
+                       m.confidence_level as current_confidence_level,
+                       -- #247: GO's own three dimensions, for the same comparison.
+                       m.connection_score as current_connection_score,
+                       m.specificity_score as current_specificity_score,
+                       m.evidence_score as current_evidence_score,
+                       m.assessment_version as current_assessment_version
                 FROM ke_go_proposals p
                 LEFT JOIN ke_go_mappings m ON p.mapping_id = m.id
                 WHERE p.id = ?
@@ -5237,7 +5261,13 @@ class ReactomeProposalModel:
                        m.reactome_id as mapping_reactome_id,
                        m.pathway_name as mapping_pathway_name,
                        m.confidence_level as current_confidence_level,
-                       m.species as current_species
+                       m.species as current_species,
+                       -- #247: Reactome shares KE-WP's four answers.
+                       m.proposed_relationship as current_relationship,
+                       m.proposed_basis as current_basis,
+                       m.proposed_specificity as current_specificity,
+                       m.proposed_coverage as current_coverage,
+                       m.assessment_version as current_assessment_version
                 FROM ke_reactome_proposals p
                 LEFT JOIN ke_reactome_mappings m ON p.mapping_id = m.id
             """

@@ -15,10 +15,15 @@ from src.utils.text import sanitize_log
 
 from src.services.monitoring import monitor_performance
 from src.services.rate_limiter import submission_rate_limit
-from src.core.assessment_scoring import compute_go_confidence
+from src.core.assessment_scoring import compute_go_confidence, recompute_confidence_level
+from src.core.config_loader import ConfigLoader
 from src.core.schemas import (
     GO_CONFIDENCE_LEVELS,
     GO_CONNECTION_TYPES,
+    KE_WP_BASIS_OPTIONS,
+    KE_WP_COVERAGE_OPTIONS,
+    KE_WP_RELATIONSHIP_OPTIONS,
+    KE_WP_SPECIFICITY_OPTIONS,
     AdminNotesSchema,
     SecurityValidation,
     validate_request_data,
@@ -101,6 +106,165 @@ def set_models(proposal, mapping, guest_code=None, go_mapping=None, go_proposal=
     ke_override_model = ke_override
     reactome_mapping_model = reactome_mapping
     reactome_proposal_model = reactome_proposal
+
+
+#: The four-question instrument, as (form key, DB column, allowed values).
+#: Shared by the KE-WP and KE-Reactome approve routes (#246) so a reviewer's
+#: edits are validated against the same whitelists the submitter's were.
+_ADMIN_STEP_FIELDS = (
+    ("step1", "proposed_relationship", KE_WP_RELATIONSHIP_OPTIONS),
+    ("step2", "proposed_basis", KE_WP_BASIS_OPTIONS),
+    ("step3", "proposed_specificity", KE_WP_SPECIFICITY_OPTIONS),
+    ("step4", "proposed_coverage", KE_WP_COVERAGE_OPTIONS),
+)
+
+
+def _read_admin_step_edits(form):
+    """Read a reviewer's four-answer edits off an approve request.
+
+    Returns ``(answers, confidence_override, error)``. ``answers`` is None when
+    the request carries no assessment at all, which is how a bare approval — and
+    every pre-#246 client — is distinguished from an edited one.
+
+    A partial assessment is refused rather than merged with the submitter's:
+    silently filling the gaps would attribute answers to a reviewer who never
+    gave them, and the resulting tier would come from a score nobody completed.
+    """
+    supplied = {
+        key: (form.get(key) or "").strip().lower()
+        for key, _column, _options in _ADMIN_STEP_FIELDS
+    }
+    if not any(supplied.values()):
+        answers = None
+    elif not all(supplied.values()):
+        return None, None, (
+            jsonify({
+                "error": "A reviewer's assessment must answer all four "
+                         "questions, or none of them.",
+            }),
+            400,
+        )
+    else:
+        answers = {}
+        for key, column, options in _ADMIN_STEP_FIELDS:
+            if supplied[key] not in options:
+                return None, None, (
+                    jsonify({"error": f"Invalid {key} value"}),
+                    400,
+                )
+            answers[column] = supplied[key]
+
+    confidence = (form.get("confidence_level") or "").strip().lower()
+    if confidence and confidence not in GO_CONFIDENCE_LEVELS:
+        return None, None, (jsonify({"error": "Invalid confidence level"}), 400)
+
+    return answers, confidence or None, None
+
+
+def _score_wp_assessment(ke_id, answers, fallback):
+    """Return the tier for a four-answer assessment, at approve time.
+
+    The submit routes already score this; approval needs its own call site
+    because a reviewer may have changed the answers since. Falls back to the
+    proposal's own tier when the Key Event is absent from the metadata snapshot
+    (#239) — unlike the submit path there *is* something to fall back to here,
+    so a reviewer is not blocked by a stale snapshot.
+    """
+    try:
+        return recompute_confidence_level(
+            ke_id=ke_id,
+            basis=answers.get("proposed_basis"),
+            specificity=answers.get("proposed_specificity"),
+            coverage=answers.get("proposed_coverage"),
+            submitted_level=fallback,
+            ke_meta_index=current_app.service_container.ke_metadata_index,
+            config=ConfigLoader.load_config().ke_pathway_assessment,
+        )
+    except Exception as exc:
+        logger.error(
+            "Approve-time scoring failed for %s (%s); keeping %r",
+            sanitize_log(ke_id), exc, fallback,
+        )
+        return fallback
+
+
+def _resolve_reviewed_assessment(proposal, form, ke_id):
+    """Merge a reviewer's edits over a proposal's stored assessment.
+
+    Returns ``(answers, confidence, edited, error)``. When the reviewer changed
+    nothing, this returns the submitter's values unchanged so an untouched
+    approval and a bare one produce identical rows — the guarantee
+    ``tests/test_go_approval_refinement.py`` already holds the GO path to.
+    """
+    edits, confidence_override, error = _read_admin_step_edits(form)
+    if error:
+        return None, None, False, error
+
+    stored = {
+        column: proposal.get(column)
+        for _key, column, _options in _ADMIN_STEP_FIELDS
+    }
+    answers = edits if edits is not None else stored
+    edited = edits is not None and edits != stored
+
+    if confidence_override:
+        confidence = confidence_override
+    elif all(answers.values()):
+        confidence = _score_wp_assessment(
+            ke_id, answers, proposal.get("proposed_confidence")
+        )
+    else:
+        confidence = proposal.get("proposed_confidence")
+
+    return answers, confidence, edited, None
+
+
+def _current_assessment(model, table, proposal, columns):
+    """The assessment the target mapping holds today, for a revision proposal.
+
+    #247: a reviewer opening a revision was shown what is proposed and not what
+    it replaces, so "Medium" arrived with nothing to compare it against. Returns
+    None for a new-pair proposal, which has no current state — the panel then
+    shows the proposed assessment alone rather than an empty column implying
+    something was lost.
+
+    Read here rather than in the model layer because no by-id getter exists for
+    any of the three mapping tables, and adding three is more surface than this
+    needs. The table name is a literal from the caller, never request input.
+    """
+    mapping_id = proposal.get("mapping_id")
+    if not mapping_id or model is None:
+        return None
+    try:
+        conn = model.db.get_connection()
+        try:
+            row = conn.execute(
+                f"SELECT {', '.join(columns)} FROM {table} WHERE id = ?",
+                (mapping_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+        return dict(row) if row else None
+    except Exception as exc:
+        # A missing comparison is a degraded panel, not a failed review.
+        logger.error("Could not read current assessment for %s: %s", table, exc)
+        return None
+
+
+_WP_ASSESSMENT_COLUMNS = (
+    "connection_type", "confidence_level", "assessment_version",
+    "proposed_relationship", "proposed_basis",
+    "proposed_specificity", "proposed_coverage",
+)
+_GO_ASSESSMENT_COLUMNS = (
+    "connection_type", "confidence_level", "assessment_version",
+    "connection_score", "specificity_score", "evidence_score",
+)
+_REACTOME_ASSESSMENT_COLUMNS = (
+    "confidence_level", "assessment_version",
+    "proposed_relationship", "proposed_basis",
+    "proposed_specificity", "proposed_coverage",
+)
 
 
 def _compute_confidence_from_dimensions(conn_score, spec_score, ev_score, ke_go_config):
@@ -281,6 +445,11 @@ def admin_proposal_detail(proposal_id: int):
             except (ValueError, TypeError):
                 proposal['rejected_at_formatted'] = proposal['rejected_at']
 
+        # #247: what the revision replaces, so a proposed tier arrives
+        # with something to compare it against. None for a new pair.
+        proposal["current_assessment"] = _current_assessment(
+            mapping_model, "mappings", proposal, _WP_ASSESSMENT_COLUMNS
+        )
         return jsonify(proposal)
 
     except Exception as e:
@@ -347,6 +516,31 @@ def approve_proposal(proposal_id: int):
         proposed_specificity = proposal.get("proposed_specificity")
         proposed_coverage = proposal.get("proposed_coverage")
 
+        # #246: a reviewer may refine the assessment before approving, rather
+        # than choosing between approving something they consider wrong and
+        # rejecting it to force a resubmit. Applies to new-pair proposals as
+        # much as revisions — a first-time submitter is the most likely to
+        # misjudge a dimension, and rejecting them is the interaction most
+        # likely to stop them submitting a second time.
+        reviewed, reviewed_confidence, assessment_edited, edit_error = (
+            _resolve_reviewed_assessment(proposal, request.form, proposal.get("ke_id"))
+        )
+        if edit_error:
+            return edit_error
+        proposed_relationship = reviewed["proposed_relationship"]
+        proposed_basis = reviewed["proposed_basis"]
+        proposed_specificity = reviewed["proposed_specificity"]
+        proposed_coverage = reviewed["proposed_coverage"]
+        if assessment_edited:
+            logger.info(
+                "Proposal %s assessment edited at review by %s: %s -> %s",
+                sanitize_log(proposal_id), sanitize_log(admin_username),
+                sanitize_log(str({
+                    k: proposal.get(k) for k in reviewed
+                })),
+                sanitize_log(str(reviewed)),
+            )
+
         # Apply the proposed changes
         success = True
         mapping_id = proposal["mapping_id"]
@@ -368,7 +562,11 @@ def approve_proposal(proposal_id: int):
                 wp_id=proposal["wp_id"],
                 wp_title=proposal["wp_title"],
                 connection_type=proposal.get("new_pair_connection_type") or proposal.get("proposed_connection_type"),
-                confidence_level=proposal.get("new_pair_confidence_level") or proposal.get("proposed_confidence"),
+                confidence_level=(
+                    reviewed_confidence
+                    or proposal.get("new_pair_confidence_level")
+                    or proposal.get("proposed_confidence")
+                ),
                 created_by=proposal.get("provider_username") or admin_username,
                 # Phase 34 ASMT-02: assessment answers carried from proposal.
                 proposed_relationship=proposed_relationship,
@@ -411,7 +609,7 @@ def approve_proposal(proposal_id: int):
             success = mapping_model.update_mapping(
                 mapping_id=mapping_id,
                 connection_type=proposal["proposed_connection_type"],
-                confidence_level=proposal["proposed_confidence"],
+                confidence_level=reviewed_confidence or proposal["proposed_confidence"],
                 updated_by=admin_username,
                 approved_by_curator=admin_username,
                 approved_at_curator=approved_at,
@@ -599,6 +797,11 @@ def admin_go_proposal_detail(proposal_id: int):
             except (ValueError, TypeError):
                 proposal["rejected_at_formatted"] = proposal["rejected_at"]
 
+        # #247: what the revision replaces, so a proposed tier arrives
+        # with something to compare it against. None for a new pair.
+        proposal["current_assessment"] = _current_assessment(
+            go_mapping_model, "ke_go_mappings", proposal, _GO_ASSESSMENT_COLUMNS
+        )
         return jsonify(proposal)
 
     except Exception as e:
@@ -985,6 +1188,11 @@ def admin_reactome_proposal_detail(proposal_id: int):
                 except (ValueError, TypeError):
                     proposal[ts_field + "_formatted"] = proposal[ts_field]
 
+        # #247: what the revision replaces, so a proposed tier arrives
+        # with something to compare it against. None for a new pair.
+        proposal["current_assessment"] = _current_assessment(
+            reactome_mapping_model, "ke_reactome_mappings", proposal, _REACTOME_ASSESSMENT_COLUMNS
+        )
         return jsonify(proposal)
 
     except Exception as e:
@@ -1070,13 +1278,19 @@ def approve_reactome_proposal(proposal_id: int):
             # D-02's remaining guarantee is untouched: nothing here reads a
             # dimension score off the request, and ke_reactome_mappings still
             # has no column for one.
-            revised = {
-                field: proposal.get(field)
-                for field in (
-                    "proposed_relationship", "proposed_basis",
-                    "proposed_specificity", "proposed_coverage",
+            # #246: the reviewer's edits, or the submitter's values untouched.
+            revised, reviewed_confidence, edited, edit_error = (
+                _resolve_reviewed_assessment(
+                    proposal, request.form, proposal.get("ke_id")
                 )
-            }
+            )
+            if edit_error:
+                return edit_error
+            if edited:
+                logger.info(
+                    "Reactome proposal %s assessment edited at review by %s",
+                    sanitize_log(proposal_id), sanitize_log(admin_username),
+                )
             # Only a fully answered revision earns 'v2'. A legacy deletion-era
             # proposal has no answers and leaves the column alone rather than
             # claiming an assessment it cannot show.
@@ -1088,7 +1302,7 @@ def approve_reactome_proposal(proposal_id: int):
                 approved_at_curator=approved_at,
                 proposed_by=proposal.get("provider_username"),
                 suggestion_score=proposal.get("suggestion_score"),
-                confidence_level=proposal.get("proposed_confidence"),
+                confidence_level=reviewed_confidence or proposal.get("proposed_confidence"),
                 assessment_version="v2" if scored else None,
                 **revised,
                 **_source_version_fields("reactome"),
