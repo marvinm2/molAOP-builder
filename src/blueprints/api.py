@@ -27,6 +27,7 @@ from src.core.schemas import (
     SecurityValidation,
     validate_request_data,
 )
+from src.core.assessment_scoring import recompute_confidence_level
 from src.core.config_loader import ConfigLoader
 from src.services import source_versions
 from src.utils.text import sanitize_log
@@ -49,6 +50,7 @@ go_suggestion_service = None
 go_mapping_model = None
 go_proposal_model = None
 ke_metadata = None
+ke_metadata_index = None
 pathway_metadata = None
 ke_aop_membership = None
 reactome_suggestion_service = None
@@ -60,11 +62,11 @@ def set_models(mapping, proposal, cache, suggestion_service=None,
                go_suggestion_svc=None, go_mapping=None, go_proposal=None,
                ke_meta=None, pathway_meta=None, ke_aop_membership_data=None,
                reactome_suggestion_svc=None, reactome_mapping=None,
-               reactome_proposal=None):
+               reactome_proposal=None, ke_meta_index=None):
     """Set the model instances"""
     global mapping_model, proposal_model, cache_model, pathway_suggestion_service
     global go_suggestion_service, go_mapping_model, go_proposal_model
-    global ke_metadata, pathway_metadata, ke_aop_membership
+    global ke_metadata, ke_metadata_index, pathway_metadata, ke_aop_membership
     global reactome_suggestion_service, reactome_mapping_model, reactome_proposal_model
     mapping_model = mapping
     proposal_model = proposal
@@ -74,11 +76,42 @@ def set_models(mapping, proposal, cache, suggestion_service=None,
     go_mapping_model = go_mapping
     go_proposal_model = go_proposal
     ke_metadata = ke_meta
+    # Phase 37 #237: the submit routes score the assessment server-side and
+    # need the Key Event's biological level by id. v1_api has taken the index
+    # since it was added; this blueprint had only the flat list, which is why
+    # /api/ke_detail still linear-scans.
+    ke_metadata_index = ke_meta_index
     pathway_metadata = pathway_meta
     ke_aop_membership = ke_aop_membership_data
     reactome_suggestion_service = reactome_suggestion_svc
     reactome_mapping_model = reactome_mapping
     reactome_proposal_model = reactome_proposal
+
+
+def _recompute_wp_confidence(ke_id, basis, specificity, coverage, submitted_level):
+    """Score a KE-pathway assessment server-side and return the tier to store.
+
+    Wraps ``recompute_confidence_level`` with this blueprint's module state so
+    the submit routes stay readable. Falls back to the submitted tier on any
+    failure — a scoring bug must not cost a curator their submission.
+    """
+    try:
+        return recompute_confidence_level(
+            ke_id=ke_id,
+            basis=basis,
+            specificity=specificity,
+            coverage=coverage,
+            submitted_level=submitted_level,
+            ke_meta_index=ke_metadata_index,
+            config=ConfigLoader.load_config().ke_pathway_assessment,
+        )
+    except Exception as exc:
+        logger.error(
+            "Server-side confidence scoring failed for %s (%s); "
+            "keeping the submitted tier %r",
+            sanitize_log(ke_id), exc, submitted_level,
+        )
+        return submitted_level
 
 
 def login_required(f):
@@ -205,6 +238,20 @@ def submit():
             SecurityValidation.sanitize_string(step4) if step4 else None
         )
 
+        # Phase 37 #237: score the assessment here rather than trusting the
+        # tier the browser computed. The +1.0 biological-level bonus is read
+        # from a client instance variable that a restored form can lose, which
+        # silently stored a tier one level low; the server holds the KE's
+        # biological level and the same scoring_config.yaml the browser is
+        # served, so it can compute the tier the curator was shown.
+        confidence_level = _recompute_wp_confidence(
+            ke_id=ke_id,
+            basis=proposed_basis,
+            specificity=proposed_specificity,
+            coverage=proposed_coverage,
+            submitted_level=confidence_level,
+        )
+
         # Get current user
         created_by = session.get("user", {}).get("username", "anonymous")
 
@@ -271,10 +318,41 @@ def submit():
         return jsonify({"error": "Failed to add entry"}), 500
 
 
+@api_bp.route("/api/ke-snapshot", methods=["GET"])
+@general_rate_limit
+def get_ke_snapshot_info():
+    """How old the Key Event dropdown is, and how many entries it holds (#239).
+
+    The dropdown is a fixed option list served from a precomputed snapshot of
+    AOP-Wiki, with no search fallback the way pathways have — so a Key Event
+    added upstream since the snapshot was taken cannot be curated at all, and
+    nothing in the UI said so. This does not fix the staleness; it makes it
+    legible, which is the part that was costing curator time.
+    """
+    try:
+        from flask import current_app
+        container = getattr(current_app, "service_container", None)
+        snapshot_date = container.ke_snapshot_date() if container else None
+        return jsonify({
+            "key_event_count": len(ke_metadata) if ke_metadata else 0,
+            "snapshot_date": snapshot_date,
+            "source": "precomputed" if ke_metadata else "live_sparql",
+        }), 200
+    except Exception as e:
+        logger.error("KE snapshot info failed: %s", e)
+        return jsonify({"error": "Could not resolve KE snapshot info"}), 500
+
+
 @api_bp.route("/get_ke_options", methods=["GET"])
 @sparql_rate_limit
 def get_ke_options():
-    """Fetch Key Event options from pre-computed metadata or SPARQL endpoint"""
+    """Fetch Key Event options from pre-computed metadata or SPARQL endpoint
+
+    Returns a bare array for backward compatibility. How old that array is, is
+    reported separately by /api/ke-snapshot (#239) — a curator who cannot find
+    a Key Event needs to be able to tell "this KE does not exist" from "this
+    dropdown is older than this KE".
+    """
     try:
         # Serve from pre-computed metadata if available
         if ke_metadata:
@@ -1768,6 +1846,17 @@ def submit_reactome_mapping():
         )
         proposed_coverage = (
             SecurityValidation.sanitize_string(step4) if step4 else None
+        )
+
+        # Phase 37 #237: same server-side scoring as the WP /submit route.
+        # Reactome captures the identical four answers, so it inherits the
+        # same defect and the same fix.
+        confidence_level = _recompute_wp_confidence(
+            ke_id=ke_id,
+            basis=proposed_basis,
+            specificity=proposed_specificity,
+            coverage=proposed_coverage,
+            submitted_level=confidence_level,
         )
 
         created_by = session.get("user", {}).get("username", "anonymous")

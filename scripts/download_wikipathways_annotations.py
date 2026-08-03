@@ -50,6 +50,11 @@ CHUNK_SIZE = 200
 # Output file paths
 OUTPUT_PATH = "data/wikipathways_gene_annotations.json"
 FILTERED_IDS_PATH = "data/wikipathways_filtered_ids.json"
+# Gene count for EVERY pathway, including the ones the filter drops (#238).
+# The annotations file above holds genes only for pathways inside the bounds,
+# so without this there is no way to tell a curator *why* a pathway is not
+# suggested — the app can only omit it silently, which is the defect.
+GENE_COUNTS_PATH = "data/wikipathways_gene_counts.json"
 
 
 def _sparql_post(query, timeout=90, retries=2):
@@ -196,6 +201,17 @@ def download_wikipathways_annotations(output_path=OUTPUT_PATH, chunk_size=CHUNK_
     filtered_ids = sorted(filtered.keys())
     _write_json_atomic(filtered_ids, FILTERED_IDS_PATH)
     logger.info("Saved %d filtered pathway IDs -> %s", len(filtered_ids), FILTERED_IDS_PATH)
+
+    # Gene counts for every pathway that has any, filtered or not (#238), so
+    # the picker can say "7 genes — below the suggestion threshold" instead of
+    # dropping the pathway without explanation.
+    gene_counts = {pid: len(genes) for pid, genes in raw.items()}
+    _write_json_atomic(gene_counts, GENE_COUNTS_PATH)
+    logger.info(
+        "Saved gene counts for %d pathways (%d outside [%d,%d]) -> %s",
+        len(gene_counts), len(gene_counts) - len(filtered),
+        MIN_GENES, MAX_GENES, GENE_COUNTS_PATH,
+    )
 
     for pid in filtered_ids[:3]:
         logger.info("Sample %s: %d genes - %s...", pid, len(filtered[pid]), filtered[pid][:5])
