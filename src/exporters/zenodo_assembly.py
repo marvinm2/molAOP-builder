@@ -25,6 +25,7 @@ import json
 import zipfile
 from collections import Counter
 from typing import Callable, Optional
+from src.exporters.licence import DATASET_LICENCE_NAME, DATASET_LICENCE_ZENODO
 
 
 # ---------- counts + change detection ----------
@@ -201,7 +202,7 @@ def build_readme(
 **Published:** {today}
 **Source application:** https://molaop-builder.vhp4safety.nl
 **Repository:** https://github.com/marvinm2/molAOP-builder
-**License:** CC0 1.0 Universal (public domain dedication)
+**License:** {DATASET_LICENCE_NAME}
 
 This deposit contains the current curated mappings between Key Events (KEs) of the Adverse Outcome Pathway framework and three molecular-pathway / ontology resources. Each mapping has been proposed by a curator, scored by a BioBERT-based suggestion engine, assessed against a structured confidence rubric, and approved by an administrator before inclusion in the dataset.
 
@@ -290,7 +291,7 @@ def build_metadata(today: str, source_versions: Optional[dict] = None) -> dict:
             "Adverse Outcome Pathway", "AOP", "Key Event", "WikiPathways", "Gene Ontology",
             "Reactome", "toxicology", "pathway analysis", "GMT", "RDF", "BioBERT", "curation",
         ],
-        "license": "cc-zero",
+        "license": DATASET_LICENCE_ZENODO,
         "publication_date": today,
         "version": today,
         "access_right": "open",

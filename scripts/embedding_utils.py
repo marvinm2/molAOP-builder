@@ -15,6 +15,56 @@ from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
+# Records when each corpus artifact was last built. The suggestion score stored
+# on a mapping is only interpretable against the corpus that produced it — a
+# rebuild moves every score, and without this there is no way to tell that from
+# a scoring bug. Written beside the artifacts on the data mount.
+CORPUS_MANIFEST_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), '..', 'data', 'corpus_manifest.json'
+)
+
+
+def _utc_date():
+    """Today in UTC as YYYY-MM-DD.
+
+    Deliberately a date, not a timestamp: this is a corpus *identity* that gets
+    stamped on curated rows, and a second-resolution value would make two
+    mappings scored from the same corpus look like they came from different
+    ones.
+    """
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).strftime('%Y-%m-%d')
+
+
+def record_corpus_build(artifact_path: str, rows: int = None, model: str = None):
+    """Note in the manifest that `artifact_path` was just rebuilt.
+
+    Best-effort: a manifest that cannot be written must never fail a rebuild
+    that otherwise succeeded. The cost of failing here is a missing provenance
+    stamp; the cost of raising is a corpus half-rebuilt.
+    """
+    key = os.path.basename(artifact_path)
+    entry = {'built_on': _utc_date()}
+    if rows is not None:
+        entry['rows'] = rows
+    if model is not None:
+        entry['model'] = model
+
+    path = os.path.abspath(CORPUS_MANIFEST_PATH)
+    try:
+        manifest = {}
+        if os.path.exists(path):
+            with open(path, 'r', encoding='utf-8') as fh:
+                manifest = json.load(fh)
+        manifest[key] = entry
+        tmp = path + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as fh:
+            json.dump(manifest, fh, indent=2, sort_keys=True)
+        os.replace(tmp, path)
+        logger.info("Recorded corpus build: %s -> %s", key, entry['built_on'])
+    except Exception as e:
+        logger.warning("Could not record corpus build for %s: %s", key, e)
+
 
 def setup_project_path():
     """Add project root to sys.path so imports like embedding_service work."""
@@ -98,11 +148,20 @@ def save_embeddings(embeddings: dict, path: str):
     matrix = (matrix / norms).astype(np.float32)
 
     logger.info("Saving %d normalized embeddings to %s.npz ...", len(embeddings), npz_path)
-    np.savez(npz_path, ids=ids, matrix=matrix)
-
     actual_path = npz_path + '.npz'
+    # Write to a sibling and rename. A rebuild that dies partway through must
+    # not leave a truncated corpus behind — that matters far more now the
+    # rebuild can run unattended from a cron than it did when a human always
+    # ran it and saw the traceback. np.savez appends .npz itself, so the temp
+    # stem is named without it and the written file is <stem>.npz.
+    tmp_stem = npz_path + '.tmp'
+    np.savez(tmp_stem, ids=ids, matrix=matrix)
+    os.replace(tmp_stem + '.npz', actual_path)
+
     file_size_mb = os.path.getsize(actual_path) / 1024 / 1024
     logger.info("Saved: %.2f MB (shape: %s)", file_size_mb, str(matrix.shape))
+
+    record_corpus_build(actual_path, rows=len(embeddings))
 
     sample_id = next(iter(embeddings))
     logger.info("Sample id: %s, vector norm after normalization: %.6f",
@@ -163,9 +222,16 @@ def save_metadata(metadata, path):
         path: Output file path
     """
     logger.info(f"Saving metadata to {path}...")
-    with open(path, 'w', encoding='utf-8') as f:
+    # Atomic, for the same reason as save_embeddings. `open(path, 'w')`
+    # truncates immediately, so an interrupted write leaves a half-written
+    # snapshot — and ke_metadata.json is what the Key Event dropdown is served
+    # from, so a truncated one silently removes Key Events from curation.
+    tmp = path + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
         json.dump(metadata, f, indent=2)
+    os.replace(tmp, path)
 
     file_size_mb = os.path.getsize(path) / 1024 / 1024
     count = len(metadata)
     logger.info(f"Saved {count} entries: {file_size_mb:.2f} MB")
+    record_corpus_build(path, rows=count)
