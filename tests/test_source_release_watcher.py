@@ -271,3 +271,44 @@ def test_no_marker_is_written_when_a_rebuild_failed(monkeypatch, tmp_path):
 
     assert watcher.main() == 3
     assert not marker.exists()
+
+
+def test_a_partial_run_only_advances_the_sources_it_rebuilt(monkeypatch, tmp_path):
+    """The bug this pins, found in production 2026-08-03: a bare
+    `capture_source_versions.py` rewrites every entry in the manifest, so a
+    run that rebuilt one source recorded current versions for all four. The
+    three untouched corpora were months stale and would never have been
+    reported again — the exact failure the failed-rebuild guard exists to
+    prevent, reached by a different route."""
+    monkeypatch.setattr(watcher, "REBUILT_MARKER", str(tmp_path / ".corpus-rebuilt"))
+    _patch(
+        monkeypatch,
+        live={
+            "aopwiki": {"version": "2026-07-28", "unavailable": False},
+            "wikipathways": {"version": "2026-07-10", "unavailable": False},
+        },
+        stored=_stored(
+            aopwiki={"snapshot_date": "2026-05-06"},
+            wikipathways={"release_date": "2026-05-10"},
+        ),
+    )
+    monkeypatch.setattr(watcher, "rebuild", lambda source: True)
+    calls = []
+
+    class _Ok:
+        returncode = 0
+
+    monkeypatch.setattr(
+        watcher.subprocess, "run", lambda cmd, **k: calls.append(cmd) or _Ok()
+    )
+    monkeypatch.setattr(
+        sys, "argv", ["check_source_releases.py", "--only", "aopwiki", "--rebuild"]
+    )
+
+    assert watcher.main() == 0
+    capture = next(c for c in calls if "capture_source_versions.py" in " ".join(c))
+    assert "--source" in capture and "aopwiki" in capture
+    assert "wikipathways" not in capture, (
+        "wikipathways was not rebuilt; recording its current version would "
+        "hide its drift permanently"
+    )
