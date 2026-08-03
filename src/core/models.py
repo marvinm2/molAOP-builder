@@ -9,6 +9,7 @@ import uuid as uuid_lib
 from datetime import datetime
 from typing import Dict, List, Optional
 
+from src.core.schemas import connection_type_for_relationship
 from src.utils.text import detect_go_direction
 
 logger = logging.getLogger(__name__)
@@ -347,6 +348,10 @@ class Database:
             self._migrate_mappings_assessment_fields(conn)
             self._migrate_reactome_proposals_assessment_fields(conn)
             self._migrate_reactome_mappings_assessment_fields(conn)
+
+            # #264: normalise connection_type values the Phase 34 dual-write
+            # wrote in the relationship vocabulary instead of this column's own.
+            self._migrate_normalise_connection_type_vocabulary(conn)
 
             # Migrate ke_go_proposals to add go_namespace column (Phase 21)
             self._migrate_proposals_go_namespace(conn)
@@ -1181,6 +1186,45 @@ class Database:
             logger.error("Error migrating mappings assessment fields: %s", e)
             raise
 
+    def _migrate_normalise_connection_type_vocabulary(self, conn):
+        """Rewrite connection_type values that hold a relationship answer (#264).
+
+        The Phase 34 dual-write copied ``proposed_relationship`` into
+        ``connection_type`` without translating it, so ``bidirectional`` and
+        ``unclear`` — assessment answers, not connection types — reached a
+        column whose vocabulary is closed to (causative, responsive, other,
+        undefined). 34 of 200 production rows were affected when this was
+        found. The rows are losslessly recoverable because the original answer
+        is preserved in ``proposed_relationship``; this only repairs the
+        derived column.
+
+        Idempotent: matches on the two out-of-vocabulary literals, so a second
+        run finds nothing. Deliberately scoped to those two — a value outside
+        both vocabularies is not this bug and is left alone to be noticed.
+        """
+        try:
+            cursor = conn.execute("PRAGMA table_info(mappings)")
+            if "connection_type" not in [row[1] for row in cursor.fetchall()]:
+                return
+
+            repaired = 0
+            for stale, correct in (("bidirectional", "other"), ("unclear", "undefined")):
+                result = conn.execute(
+                    "UPDATE mappings SET connection_type = ? WHERE connection_type = ?",
+                    (correct, stale),
+                )
+                repaired += result.rowcount or 0
+
+            if repaired:
+                logger.info(
+                    "Normalised %s mapping(s) whose connection_type held a "
+                    "relationship answer (#264)",
+                    repaired,
+                )
+        except Exception as e:
+            logger.error("Error normalising connection_type vocabulary: %s", e)
+            raise
+
     def _migrate_reactome_proposals_assessment_fields(self, conn):
         """
         Add assessment-question columns to the ke_reactome_proposals table if they do
@@ -1845,8 +1889,13 @@ class MappingModel(MappingCountsMixin):
     ) -> Optional[int]:
         """Create a new KE-WP mapping"""
         mapping_uuid = str(uuid_lib.uuid4())
-        # Phase 34 dual-write: proposed_relationship also populates connection_type
-        effective_connection_type = proposed_relationship if proposed_relationship is not None else connection_type
+        # Phase 34 dual-write: proposed_relationship also populates connection_type,
+        # translated to that column's own narrower vocabulary (#264).
+        effective_connection_type = (
+            connection_type_for_relationship(proposed_relationship)
+            if proposed_relationship is not None
+            else connection_type
+        )
         assessment_version = _classify_assessment_version(
             proposed_relationship, proposed_basis, proposed_specificity, proposed_coverage
         )
@@ -2275,9 +2324,12 @@ class MappingModel(MappingCountsMixin):
             "aopwiki_snapshot_date": "aopwiki_snapshot_date",
         }
 
-        # Phase 34 dual-write: proposed_relationship also populates connection_type
+        # Phase 34 dual-write: proposed_relationship also populates connection_type,
+        # translated to that column's own narrower vocabulary (#264).
         effective_connection_type = (
-            proposed_relationship if proposed_relationship is not None else connection_type
+            connection_type_for_relationship(proposed_relationship)
+            if proposed_relationship is not None
+            else connection_type
         )
         # Compute assessment_version whenever any assessment answer is provided
         _has_assessment = any(v is not None for v in (
@@ -2533,9 +2585,13 @@ class ProposalModel:
     ) -> Optional[int]:
         """Create a new proposal"""
         proposal_uuid = str(uuid_lib.uuid4())
-        # Phase 34 dual-write: proposed_relationship also populates proposed_connection_type
+        # Phase 34 dual-write: proposed_relationship also populates
+        # proposed_connection_type, translated to that column's own narrower
+        # vocabulary (#264) — the approve path copies it onto the mapping.
         effective_connection_type = (
-            proposed_relationship if proposed_relationship is not None else proposed_connection_type
+            connection_type_for_relationship(proposed_relationship)
+            if proposed_relationship is not None
+            else proposed_connection_type
         )
         conn = self.db.get_connection()
         try:
@@ -2621,9 +2677,13 @@ class ProposalModel:
             New proposal row ID on success, None on exception
         """
         proposal_uuid = str(uuid_lib.uuid4())
-        # Phase 34 dual-write: proposed_relationship also populates proposed_connection_type
+        # Phase 34 dual-write: proposed_relationship also populates
+        # proposed_connection_type, translated to that column's own narrower
+        # vocabulary (#264) — the approve path copies it onto the mapping.
         effective_connection_type = (
-            proposed_relationship if proposed_relationship is not None else connection_type
+            connection_type_for_relationship(proposed_relationship)
+            if proposed_relationship is not None
+            else connection_type
         )
         conn = self.db.get_connection()
         try:
