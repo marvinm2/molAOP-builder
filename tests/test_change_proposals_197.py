@@ -233,15 +233,19 @@ class TestSubmitReactomeProposal:
         assert props[0]["proposed_delete"] in (1, True)
         assert props[0]["reactome_id"] == "R-HSA-5357801"
 
-    def test_confidence_only_rejected_deletion_only(self, client_models):
-        # Reactome supports deletion-only (D-02 locks confidence), so a
-        # non-deletion submission is rejected.
+    def test_bare_confidence_no_longer_sets_a_tier(self, client_models):
+        # #245 removed the direct confidence control from every resource. The
+        # field is not merely ignored — with no assessment behind it the
+        # submission is refused, so a client still posting the old shape fails
+        # loudly instead of silently creating a proposal that asserts a tier
+        # with no stated grounds.
         c, rm, rpm = client_models
         _seed_reactome_mapping(rm)
         entry = _entry(ke_id="KE 177", reactome_id="R-HSA-5357801")
         resp = c.post("/submit_reactome_proposal",
                       data=self._base_form(entry, changeConfidence="medium"))
         assert resp.status_code == 400
+        assert "four assessment questions" in resp.get_json()["error"]
         assert rpm.get_all_proposals() == []
 
     def test_unknown_mapping_returns_404(self, client_models):
@@ -379,10 +383,12 @@ class TestApproveReactomeChangeProposal:
         assert rpm.find_mapping_by_details("KE 177", "R-HSA-5357801") is None
         assert rpm.get_proposal_by_id(pid)["status"] == "approved"
 
-    def test_approve_nondelete_change_rejected(self, admin):
-        # Defensive guard: Reactome confidence is locked (D-02), so a non-delete
-        # change against an existing mapping cannot be applied and is rejected
-        # rather than silently no-op'd or duplicated as a new pair.
+    def test_approve_nondelete_change_applies_the_revision(self, admin):
+        # #245 reversed the deletion-only half of D-02, so a revision against an
+        # existing Reactome mapping is now applied rather than rejected. This
+        # proposal is the pre-#245 shape — a tier with no answers behind it —
+        # which still applies, but must not claim a 'v2' assessment it cannot
+        # show.
         c, rm, rpm, db = admin
         mapping_id = _seed_reactome_mapping(rm, confidence_level="high")
         pid = rpm.create_proposal(
@@ -391,11 +397,13 @@ class TestApproveReactomeChangeProposal:
             proposed_confidence="low", ke_id="KE 177", reactome_id="R-HSA-5357801",
         )
         resp = c.post(f"/admin/reactome-proposals/{pid}/approve", data={"admin_notes": ""})
-        assert resp.status_code == 400
-        # Mapping untouched, proposal still pending.
+        assert resp.status_code == 200
+        assert resp.get_json()["action"] == "updated"
         row = db.get_connection().execute(
-            "SELECT confidence_level FROM ke_reactome_mappings WHERE id = ?",
+            "SELECT confidence_level, assessment_version "
+            "FROM ke_reactome_mappings WHERE id = ?",
             (mapping_id,),
         ).fetchone()
-        assert row["confidence_level"] == "high"
-        assert rpm.get_proposal_by_id(pid)["status"] == "pending"
+        assert row["confidence_level"] == "low"
+        assert row["assessment_version"] == "v1"
+        assert rpm.get_proposal_by_id(pid)["status"] == "approved"

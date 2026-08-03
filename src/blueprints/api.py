@@ -118,6 +118,101 @@ def _recompute_wp_confidence(ke_id, basis, specificity, coverage, submitted_leve
         return submitted_level
 
 
+#: The four assessment answers, in the order the KE-WP scorer expects, paired
+#: with the DB column each maps to. Shared by the KE-WP and KE-Reactome revision
+#: routes (#245) — both resources use the same four-question instrument, and a
+#: third hand-written copy is how the GO and WP paths drifted apart to begin
+#: with.
+_WP_STEP_COLUMNS = (
+    ("step1", "proposed_relationship"),
+    ("step2", "proposed_basis"),
+    ("step3", "proposed_specificity"),
+    ("step4", "proposed_coverage"),
+)
+
+
+def _collect_step_answers(form, payload):
+    """Copy any answered step1..step4 from `form` into `payload`.
+
+    An unanswered question arrives as "" from an unchecked radio group. Omitting
+    those lets Marshmallow's optional-field semantics fire rather than failing
+    ``OneOf`` on the empty string — a deletion proposal legitimately answers none
+    of the four.
+    """
+    for key, _column in _WP_STEP_COLUMNS:
+        value = form.get(key)
+        if value:
+            payload[key] = value
+    return payload
+
+
+def _resolve_step_answers(validated_data, ke_id, proposed_delete):
+    """Return ``(answers, confidence, error)`` for a four-question revision.
+
+    ``answers`` is a dict keyed by DB column name. ``error`` is a ready-to-return
+    ``(response, status)`` tuple, or None when the submission is acceptable.
+
+    Enforces the two rules that make a revision reviewable: it answers all four
+    questions or it is a deletion, and its tier is *derived* rather than
+    asserted. A deletion carries no assessment at all, so answers submitted
+    alongside one are refused rather than silently dropped.
+    """
+    answers = {
+        column: (
+            SecurityValidation.sanitize_string(validated_data.get(key))
+            if validated_data.get(key)
+            else None
+        )
+        for key, column in _WP_STEP_COLUMNS
+    }
+
+    if proposed_delete:
+        if any(answers.values()):
+            return answers, None, (
+                jsonify({"error": "A deletion proposal carries no assessment."}),
+                400,
+            )
+        return answers, None, None
+
+    if not all(answers.values()):
+        return answers, None, (
+            jsonify({
+                "error": "A revision must answer all four assessment questions, "
+                         "or propose a deletion.",
+            }),
+            400,
+        )
+
+    confidence = _recompute_wp_confidence(
+        ke_id=ke_id,
+        basis=answers["proposed_basis"],
+        specificity=answers["proposed_specificity"],
+        coverage=answers["proposed_coverage"],
+        submitted_level=None,
+    )
+    if not confidence:
+        # Scoring returns nothing when the Key Event is absent from the metadata
+        # snapshot, which happens whenever the snapshot lags AOP-Wiki (#239). On
+        # the new-pair path the browser's own tier stands in; a revision has no
+        # submitted tier to fall back to, so storing the assessment anyway would
+        # record four answers against a tier that never moves. Refuse, and say why.
+        logger.warning(
+            "Refusing revision for %s: confidence not derivable "
+            "(KE missing from the metadata snapshot?)",
+            sanitize_log(ke_id),
+        )
+        return answers, None, (
+            jsonify({
+                "error": "Could not derive a confidence level for this Key "
+                         "Event. Its biological level is missing from the "
+                         "current snapshot, so the assessment cannot be scored.",
+            }),
+            409,
+        )
+
+    return answers, confidence, None
+
+
 def _compute_go_confidence(connection_score, specificity_score, evidence_score):
     """Score a KE-GO revision's three dimensions and return the tier to store.
 
@@ -661,14 +756,7 @@ def submit_proposal():
             "userAffiliation": request.form.get("userAffiliation"),
             "deleteEntry": request.form.get("deleteEntry", ""),
         }
-        # An unanswered question arrives as "" from an unchecked radio group.
-        # Omit those so Marshmallow's optional-field semantics fire, rather than
-        # failing OneOf on the empty string — a deletion proposal legitimately
-        # answers none of the four.
-        for key in ("step1", "step2", "step3", "step4"):
-            value = request.form.get(key)
-            if value:
-                proposal_data[key] = value
+        _collect_step_answers(request.form, proposal_data)
 
         # Debug logging
         logger.info("Proposal submission data: %s", sanitize_log(str(proposal_data)))
@@ -697,38 +785,6 @@ def submit_proposal():
         # as /submit does. A deletion proposes no assessment; anything else must
         # carry the full four, since a partially answered revision would store a
         # tier derived from a score the curator never completed.
-        def _answer(key):
-            value = validated_data.get(key)
-            # Already whitelisted by OneOf; sanitize_string is defence in depth,
-            # matching /submit.
-            return SecurityValidation.sanitize_string(value) if value else None
-
-        proposed_relationship = _answer("step1")
-        proposed_basis = _answer("step2")
-        proposed_specificity = _answer("step3")
-        proposed_coverage = _answer("step4")
-        answers = (
-            proposed_relationship, proposed_basis,
-            proposed_specificity, proposed_coverage,
-        )
-
-        if not proposed_delete:
-            if not all(answers):
-                return (
-                    jsonify({
-                        "error": "A revision must answer all four assessment "
-                                 "questions, or propose a deletion.",
-                    }),
-                    400,
-                )
-        elif any(answers):
-            # A deletion makes no assertion about confidence; accepting answers
-            # alongside it would store reasoning for a mapping about to vanish.
-            return (
-                jsonify({"error": "A deletion proposal carries no assessment."}),
-                400,
-            )
-
         # Additional email domain validation
         if not SecurityValidation.validate_email_domain(user_email):
             return jsonify({"error": "Invalid email domain."}), 400
@@ -762,38 +818,12 @@ def submit_proposal():
         # Get current user
         provider_username = session.get("user", {}).get("username", "unknown")
 
-        # #245: derive the tier from the answers rather than accepting one, so
-        # there is a single instrument for setting confidence.
-        proposed_confidence = None
-        if not proposed_delete:
-            proposed_confidence = _recompute_wp_confidence(
-                ke_id=ke_id,
-                basis=proposed_basis,
-                specificity=proposed_specificity,
-                coverage=proposed_coverage,
-                submitted_level=None,
-            )
-            if not proposed_confidence:
-                # Scoring returns nothing when the Key Event is absent from the
-                # metadata snapshot, which happens whenever the snapshot lags
-                # AOP-Wiki (#239). On the new-pair path the browser's own tier
-                # stands in; a revision has no submitted tier to fall back to,
-                # so storing the assessment anyway would record four answers
-                # against a tier that never moves. Refuse, and say why.
-                logger.warning(
-                    "Refusing revision for %s: confidence not derivable "
-                    "(KE missing from the metadata snapshot?)",
-                    sanitize_log(ke_id),
-                )
-                return (
-                    jsonify({
-                        "error": "Could not derive a confidence level for this "
-                                 "Key Event. Its biological level is missing "
-                                 "from the current snapshot, so the assessment "
-                                 "cannot be scored.",
-                    }),
-                    409,
-                )
+        # #245: resolve and score the assessment once the KE id is known.
+        answers, proposed_confidence, error = _resolve_step_answers(
+            validated_data, ke_id, proposed_delete
+        )
+        if error:
+            return error
 
         # Create proposal in database
         proposal_id = proposal_model.create_proposal(
@@ -804,10 +834,7 @@ def submit_proposal():
             provider_username=provider_username,
             proposed_delete=proposed_delete,
             proposed_confidence=proposed_confidence,
-            proposed_relationship=proposed_relationship,
-            proposed_basis=proposed_basis,
-            proposed_specificity=proposed_specificity,
-            proposed_coverage=proposed_coverage,
+            **answers,
         )
 
         if proposal_id:
@@ -987,12 +1014,21 @@ def submit_go_proposal():
 @login_required
 @submission_rate_limit
 def submit_reactome_proposal():
-    """Save a deletion proposal against an existing KE-Reactome mapping.
+    """Save a revision or deletion proposal against an existing KE-Reactome mapping.
 
-    Feeds the /admin/reactome-proposals review queue (issue #197). Reactome
-    mappings have no connection type and their confidence is locked at proposal
-    creation (D-02), so the only correction a change proposal can carry is a
-    request to retire (delete) the mapping.
+    Feeds the /admin/reactome-proposals review queue (issue #197).
+
+    #245 reverses the deletion-only half of D-02. Reactome uses the same
+    four-question instrument as KE-WP — ``ke_reactome_mappings`` already carries
+    the same four ``proposed_*`` columns, written at creation — so there was
+    never a reason its assessment could not be corrected, only a decision that
+    it would not be. That decision made a wrong tier permanent: the only remedy
+    was to delete the mapping and re-create it, losing its uuid and provenance.
+
+    D-02's useful half stands: approval consumes no admin-supplied dimension
+    scores, and ``ke_reactome_mappings`` grows no score or connection_type
+    columns. Reactome genuinely has no connection type (#248) — the relationship
+    answer lives in ``proposed_relationship`` with the other three.
     """
     try:
         proposal_data = {
@@ -1002,6 +1038,7 @@ def submit_reactome_proposal():
             "userAffiliation": request.form.get("userAffiliation"),
             "deleteEntry": request.form.get("deleteEntry", ""),
         }
+        _collect_step_answers(request.form, proposal_data)
 
         is_valid, validated_data, errors = validate_request_data(
             ReactomeProposalChangeSchema, proposal_data
@@ -1017,9 +1054,6 @@ def submit_reactome_proposal():
             validated_data["userAffiliation"]
         )
         proposed_delete = validated_data["deleteEntry"] == "on"
-
-        if not proposed_delete:
-            return jsonify({"error": "No changes specified."}), 400
 
         if not SecurityValidation.validate_email_domain(user_email):
             return jsonify({"error": "Invalid email domain."}), 400
@@ -1041,6 +1075,14 @@ def submit_reactome_proposal():
 
         provider_username = session.get("user", {}).get("username", "unknown")
 
+        # Same four-question instrument and the same two refusals as the KE-WP
+        # revision path — they share the resolver rather than each having a copy.
+        answers, proposed_confidence, error = _resolve_step_answers(
+            validated_data, ke_id, proposed_delete
+        )
+        if error:
+            return error
+
         proposal_id = reactome_proposal_model.create_proposal(
             mapping_id=mapping_id,
             user_name=user_name,
@@ -1048,10 +1090,15 @@ def submit_reactome_proposal():
             user_affiliation=user_affiliation,
             provider_username=provider_username,
             proposed_delete=proposed_delete,
+            proposed_confidence=proposed_confidence,
             ke_id=ke_id,
-            ke_title=entry_dict.get("ke_title"),
+            # The Explore table now sends the whole /api/v1 row, which spells
+            # the title `ke_name`; older callers send `ke_title`. Accept either
+            # rather than silently storing NULL in the queue's display column.
+            ke_title=entry_dict.get("ke_title") or entry_dict.get("ke_name"),
             reactome_id=reactome_id,
             pathway_name=entry_dict.get("pathway_name"),
+            **answers,
         )
 
         if proposal_id:
@@ -1940,13 +1987,19 @@ def check_go_entry():
 def submit_reactome_mapping():
     """Submit a new KE-Reactome mapping proposal (Phase 25).
 
-    Phase 37 ASMT-04: reads step1-4 + connection_type from the form payload,
-    mirrors the WP /submit handler pattern (api.py:143-268). The four step*
-    values are renamed to proposed_relationship/basis/specificity/coverage
-    before forwarding to the model (which already accepts them). If
-    connection_type is absent it is derived server-side from step1 using the
-    same step1->connection_type identity mapping as the WP evaluatePathway-
-    Confidence JS function (step1 IS the raw connection type).
+    Phase 37 ASMT-04: reads step1-4 from the form payload, mirroring the WP
+    /submit handler. The four step* values are renamed to
+    proposed_relationship/basis/specificity/coverage before forwarding to the
+    model (which already accepts them).
+
+    **Reactome has no connection type (#248).** It was previously read off the
+    form and validated, then never read back out — `ke_reactome_mappings` has no
+    such column and `create_new_pair_reactome_proposal` no such parameter, so
+    the value was accepted and dropped, while the docstring described a
+    step1-derivation that was never implemented. The relationship answer lives
+    in `proposed_relationship` with the other three; there is no derived column
+    for it to populate, and adding one would contradict
+    tests/test_reactome_admin.py::test_approve_no_dimension_score_columns_used.
     """
     try:
         submit_data = {
@@ -1960,7 +2013,6 @@ def submit_reactome_mapping():
             "step2": request.form.get("step2"),
             "step3": request.form.get("step3"),
             "step4": request.form.get("step4"),
-            "connection_type": request.form.get("connection_type"),
         }
         # Drop None values so Marshmallow's required=False semantics fire
         # (mirror WP /submit handler at api.py:164).

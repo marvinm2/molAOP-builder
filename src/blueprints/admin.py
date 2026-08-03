@@ -1000,10 +1000,10 @@ def approve_reactome_proposal(proposal_id: int):
     """
     Approve a Reactome proposal and apply it to the live data.
 
-    Handles deletion (proposed_delete) and confidence-revision proposals
-    raised against an existing mapping (mapping_id set, issue #197), plus the
-    original new-pair path (mapping_id NULL) where confidence is straight
-    pass-through from proposal -> mapping (D-02).
+    Handles deletion (proposed_delete) and assessment-revision proposals
+    raised against an existing mapping (mapping_id set, issue #197 / #245),
+    plus the new-pair path (mapping_id NULL) where confidence is straight
+    pass-through from proposal -> mapping.
     """
     try:
         admin_data = {"admin_notes": request.form.get("admin_notes", "")}
@@ -1059,13 +1059,56 @@ def approve_reactome_proposal(proposal_id: int):
             }), 200
 
         if mapping_id:
-            # Reactome confidence is locked at proposal creation (D-02) and
-            # Reactome has no connection type, so a non-deletion change against
-            # an existing mapping has nothing to apply. /submit_reactome_proposal
-            # only creates deletion proposals, so this is a defensive guard.
+            # #245: apply the revision. This replaces the deletion-only guard
+            # that stood here while D-02 locked the tier at proposal creation —
+            # which meant a wrong Reactome tier could only be corrected by
+            # deleting the mapping and re-creating it, losing its uuid and
+            # provenance. The four answers are carried onto the mapping so its
+            # stored assessment describes the revision rather than the state it
+            # superseded, exactly as the KE-WP path does.
+            #
+            # D-02's remaining guarantee is untouched: nothing here reads a
+            # dimension score off the request, and ke_reactome_mappings still
+            # has no column for one.
+            revised = {
+                field: proposal.get(field)
+                for field in (
+                    "proposed_relationship", "proposed_basis",
+                    "proposed_specificity", "proposed_coverage",
+                )
+            }
+            # Only a fully answered revision earns 'v2'. A legacy deletion-era
+            # proposal has no answers and leaves the column alone rather than
+            # claiming an assessment it cannot show.
+            scored = all(v is not None for v in revised.values())
+
+            if not reactome_mapping_model.update_reactome_mapping(
+                mapping_id=mapping_id,
+                approved_by_curator=admin_username,
+                approved_at_curator=approved_at,
+                proposed_by=proposal.get("provider_username"),
+                suggestion_score=proposal.get("suggestion_score"),
+                confidence_level=proposal.get("proposed_confidence"),
+                assessment_version="v2" if scored else None,
+                **revised,
+                **_source_version_fields("reactome"),
+            ):
+                return jsonify({"error": "Failed to update Reactome mapping"}), 500
+
+            reactome_proposal_model.update_proposal_status(
+                proposal_id=proposal_id,
+                status="approved",
+                admin_username=admin_username,
+                admin_notes=admin_notes,
+            )
+            logger.info(
+                "Reactome proposal %s approved by %s, mapping %s updated",
+                sanitize_log(proposal_id), sanitize_log(admin_username), sanitize_log(mapping_id),
+            )
             return jsonify({
-                "error": "Reactome change proposals support deletion only",
-            }), 400
+                "message": "Reactome proposal approved successfully. Mapping updated.",
+                "action": "updated",
+            }), 200
 
         # Phase 25 review H-1: write the mapping in one INSERT with every
         # carry-field populated up front (eliminates the create_mapping +
@@ -1400,7 +1443,8 @@ def bulk_approve_reactome_proposals():
     Approve a batch of Reactome new-pair proposals in a single transaction.
 
     Accepts a JSON body: {"ids": [int, ...], "admin_notes": "optional string"}.
-    Confidence is straight pass-through from proposal -> mapping (D-02).
+    Confidence is straight pass-through from proposal -> mapping; this route
+    handles new pairs only, so there is no prior tier for it to move.
 
     Returns: {"approved": [mapping_uuid_str, ...], "failed": [{"id": int, "reason": str}, ...]}
 
