@@ -56,7 +56,7 @@ jobs:
         pylint **/*.py --output-format=text --reports=no --score=no --output=pylint-report.txt || true
 
     - name: Upload lint results
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       if: always()
       with:
         name: lint-reports
@@ -96,7 +96,7 @@ jobs:
         semgrep --config=auto . || true
 
     - name: Upload security reports
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       if: always()
       with:
         name: security-reports
@@ -132,7 +132,7 @@ jobs:
         radon mi . -s --json > maintainability-report.json
 
     - name: Upload complexity reports
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       if: always()
       with:
         name: complexity-reports
@@ -180,7 +180,7 @@ jobs:
         pip-audit || true
 
     - name: Upload audit report
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       if: always()
       with:
         name: dependency-audit
@@ -210,7 +210,7 @@ jobs:
         echo "Check the artifacts section for detailed reports from each tool." >> quality-summary.md
 
     - name: Upload quality summary
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: quality-summary
         path: quality-summary.md

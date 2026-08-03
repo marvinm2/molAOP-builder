@@ -38,7 +38,7 @@ jobs:
         cyclonedx-py requirements -i requirements.txt -o sbom.xml --format xml || true
 
     - name: Upload dependency reports
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       if: always()
       with:
         name: dependency-reports
@@ -74,7 +74,7 @@ jobs:
         semgrep --config=auto . || true
 
     - name: Upload SAST reports
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       if: always()
       with:
         name: sast-reports
@@ -124,7 +124,7 @@ jobs:
         echo "TruffleHog scan completed - check artifacts for detailed report"
 
     - name: Upload secret scan report
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       if: always()
       with:
         name: secret-scan-report
@@ -199,7 +199,7 @@ jobs:
         docker scout recommendations security-scan:latest || echo "Docker Scout recommendations completed"
 
     - name: Upload Docker Scout results
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       if: always()
       with:
         name: docker-security-reports
@@ -281,7 +281,7 @@ jobs:
         fi
 
     - name: Upload compliance reports
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       if: always()
       with:
         name: compliance-reports
@@ -331,7 +331,7 @@ jobs:
         echo "Check the artifacts section for detailed security reports from all tools." >> security-summary.md
 
     - name: Upload security summary
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: security-summary
         path: security-summary.md
