@@ -4775,22 +4775,51 @@ class ReactomeMappingModel(MappingCountsMixin):
         approved_at_curator: str = None,
         suggestion_score: float = None,
         proposed_by: str = None,
+        # #245 — an approved revision carries the four assessment answers and
+        # the tier derived from them. NULL leaves the column untouched, which is
+        # what a deletion or a provenance-only update wants.
+        confidence_level: Optional[str] = None,
+        proposed_relationship: Optional[str] = None,
+        proposed_basis: Optional[str] = None,
+        proposed_specificity: Optional[str] = None,
+        proposed_coverage: Optional[str] = None,
+        assessment_version: Optional[str] = None,
+        reactome_release_version: Optional[str] = None,
+        reactome_release_date: Optional[str] = None,
+        aopwiki_snapshot_date: Optional[str] = None,
     ) -> bool:
         """Update a KE-Reactome mapping at proposal-approval time.
 
-        Drops connection_type and confidence_level from the GO equivalent —
-        Reactome has no connection_type, and confidence is locked at proposal
-        creation (Phase 25 CONTEXT D-02). Also drops updated_by: the
-        ke_reactome_mappings schema (Phase 24, models.py:204-226) intentionally
-        omits an updated_by column, so attribution lives only in
-        approved_by_curator + proposed_by. Uses an ALLOWED_FIELDS whitelist
-        to prevent SQL injection.
+        Still drops connection_type and updated_by: ``ke_reactome_mappings``
+        has neither column. Reactome genuinely has no connection type (#248) —
+        the relationship answer lives in ``proposed_relationship`` with the
+        other three — and attribution rides on approved_by_curator +
+        proposed_by rather than an updated_by the schema omits on purpose.
+
+        **confidence_level is writable as of #245**, reversing the half of D-02
+        that locked the tier at proposal creation. That lock made a wrong tier
+        permanent: the only remedy was to delete the mapping and re-create it,
+        losing its uuid and provenance. What D-02 usefully guarantees is
+        untouched — approval consumes no admin-supplied dimension scores, and
+        this table grows no score columns to consume
+        (``tests/test_reactome_admin.py::test_approve_no_dimension_score_columns_used``).
+
+        Uses an ALLOWED_FIELDS whitelist to prevent SQL injection.
         """
         ALLOWED_FIELDS = {
             "approved_by_curator": "approved_by_curator",
             "approved_at_curator": "approved_at_curator",
             "suggestion_score": "suggestion_score",
             "proposed_by": "proposed_by",
+            "confidence_level": "confidence_level",
+            "proposed_relationship": "proposed_relationship",
+            "proposed_basis": "proposed_basis",
+            "proposed_specificity": "proposed_specificity",
+            "proposed_coverage": "proposed_coverage",
+            "assessment_version": "assessment_version",
+            "reactome_release_version": "reactome_release_version",
+            "reactome_release_date": "reactome_release_date",
+            "aopwiki_snapshot_date": "aopwiki_snapshot_date",
         }
         conn = self.db.get_connection()
         try:
@@ -4801,6 +4830,15 @@ class ReactomeMappingModel(MappingCountsMixin):
                 "approved_at_curator": approved_at_curator,
                 "suggestion_score": suggestion_score,
                 "proposed_by": proposed_by,
+                "confidence_level": confidence_level,
+                "proposed_relationship": proposed_relationship,
+                "proposed_basis": proposed_basis,
+                "proposed_specificity": proposed_specificity,
+                "proposed_coverage": proposed_coverage,
+                "assessment_version": assessment_version,
+                "reactome_release_version": reactome_release_version,
+                "reactome_release_date": reactome_release_date,
+                "aopwiki_snapshot_date": aopwiki_snapshot_date,
             }
             for field_name, field_value in update_data.items():
                 if field_value is not None and field_name in ALLOWED_FIELDS:

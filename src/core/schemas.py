@@ -350,12 +350,29 @@ class GoProposalChangeSchema(_MappingChangeProposalSchema):
     )
 
 
-class ReactomeProposalChangeSchema(_MappingChangeProposalSchema):
-    """Schema for KE-Reactome deletion proposals (issue #197).
+class ReactomeProposalChangeSchema(
+    _MappingChangeProposalSchema, KEWPAssessmentAnswersMixin
+):
+    """Schema for KE-Reactome revision/deletion proposals (#197, #245).
 
-    Reactome mappings have no connection type and their confidence is locked at
-    proposal creation (D-02), so the only correction a change proposal can
-    carry is a deletion request.
+    Reactome shares KE-WP's four-question instrument — ``ke_reactome_mappings``
+    already carries the same four ``proposed_*`` columns, written at creation —
+    so a revision asks the same four questions and the tier is derived from
+    them, exactly as on the KE-WP path.
+
+    **This reverses the deletion-only half of D-02.** That decision locked the
+    tier at proposal creation, which left a Reactome mapping's confidence
+    permanently uncorrectable: the only remedy for a wrong tier was to delete
+    the mapping and re-create it, losing its uuid and provenance. What D-02
+    usefully guarantees — that approval never consumes admin-supplied dimension
+    scores, and that ``ke_reactome_mappings`` grows no ``connection_score`` /
+    ``specificity_score`` / ``evidence_score`` / ``connection_type`` columns —
+    is unchanged and still pinned by
+    ``tests/test_reactome_admin.py::test_approve_no_dimension_score_columns_used``.
+
+    Reactome genuinely has no connection type (#248): the relationship answer
+    lives in ``proposed_relationship`` like the other three, and there is no
+    derived column for it to populate.
     """
 
     _id_field = "reactome_id"
@@ -501,9 +518,11 @@ class ReactomeMappingSchema(Schema):
             error="Invalid step4 option (coverage)",
         ),
     )
-    # connection_type is optional for Reactome (unlike WP where it is
-    # required). The handler derives it from step1 when absent.
-    connection_type = fields.Str(required=False, allow_none=True)
+    # No connection_type (#248). It was declared here and validated, then
+    # discarded — `ke_reactome_mappings` has no such column and the proposal
+    # model no such parameter, so the field only ever created the impression
+    # that Reactome had a connection type. Its relationship answer is `step1`,
+    # stored as `proposed_relationship` like the other three.
 
 
 class ReactomeCheckEntrySchema(Schema):

@@ -137,6 +137,26 @@ def test_legacy_mappings_say_so_rather_than_rendering_blanks(explore_html):
     assert "predates the assessment" in explore_html
 
 
+def test_reactome_shares_the_wp_questions(explore_html):
+    """#245 part 2. Reactome uses the same four columns as WikiPathways, so it
+    asks the same four questions rather than a Reactome-shaped copy — a copy is
+    how the GO and WP paths drifted apart in the first place."""
+    assert "ASSESSMENT_QUESTIONS.reactome = ASSESSMENT_QUESTIONS.wp" in explore_html
+
+
+def test_reactome_current_answers_read_the_assessment(explore_html):
+    assert "mappingType === 'wp' || mappingType === 'reactome'" in explore_html
+
+
+def test_reactome_entry_comes_from_the_row_not_data_attributes(explore_html):
+    """The hand-built entry carried only an id and a tier, which was enough to
+    delete by and not enough to revise with — the row already carries the
+    stored assessment."""
+    handler = explore_html[explore_html.index("propose-change-reactome', function"):]
+    assert "DataTable()" in handler[:400]
+    assert "data('reactome-id')" not in handler[:400]
+
+
 def test_go_rows_carry_their_current_scores(explore_html):
     """The GO entry is hand-built from data-* attributes, so the scores have to
     be emitted or currentAnswers() has nothing to read."""

@@ -326,15 +326,17 @@ class TestReactomeMappingUpdate:
 
     def test_unknown_kwarg_silently_dropped(self, reactome_mapping_model, temp_db):
         mapping_id = self._create_mapping(reactome_mapping_model)
-        # confidence_level and connection_type are NOT in the public update
-        # signature — Reactome confidence is locked at proposal creation
-        # (CONTEXT D-02) and Reactome has no connection_type at all. The
-        # ke_reactome_mappings schema also has no updated_by column, so the
-        # public signature deliberately omits it.
+        # #245 made confidence_level writable, reversing the half of D-02 that
+        # locked the tier at proposal creation — that lock made a wrong tier
+        # permanent, correctable only by deleting the mapping and re-creating
+        # it. The other two exclusions are schema facts, not decisions, and
+        # still hold: ke_reactome_mappings has no connection_type column
+        # (Reactome has no connection type at all, #248) and no updated_by
+        # column, so attribution rides on approved_by_curator + proposed_by.
         import inspect
 
         sig = inspect.signature(reactome_mapping_model.update_reactome_mapping)
-        assert "confidence_level" not in sig.parameters
+        assert "confidence_level" in sig.parameters
         assert "connection_type" not in sig.parameters
         assert "updated_by" not in sig.parameters
         # Existing confidence persists unchanged when only approval-time

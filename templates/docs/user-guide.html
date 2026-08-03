@@ -148,11 +148,18 @@ workflow rather than needing database access. This works on all three resources.
 </ol>
 <p>What you can propose depends on the resource:</p>
 <ul>
-    <li><strong>KE-WP and KE-GO</strong> &mdash; propose a deletion, a different confidence
-        level, or a different connection type</li>
-    <li><strong>KE-Reactome</strong> &mdash; deletion only. Reactome confidence is fixed when
-        the mapping is created and Reactome mappings carry no connection type, so there is
-        nothing to revise.</li>
+    <li><strong>All three resources</strong> &mdash; propose a deletion, or a revision that
+        answers the same assessment the mapping was created with. The confidence level is
+        calculated from those answers rather than chosen directly, so a correction records
+        the reasoning behind the tier it produces.</li>
+    <li><strong>KE-WikiPathways and KE-Reactome</strong> ask the four questions
+        (relationship, evidence basis, pathway specificity, KE coverage);
+        <strong>KE-GO</strong> asks for a connection type and scores its three dimensions
+        (connection, specificity, evidence). Each resource is asked the same instrument it
+        was mapped with.</li>
+    <li>The form shows the mapping's current answers beside each question, so you can see
+        what you are changing. A mapping curated before the assessment existed has none to
+        show, and says so.</li>
 </ul>
 
 <h3>Downloads &amp; exports</h3>

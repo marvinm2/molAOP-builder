@@ -771,13 +771,17 @@
                     ]}
                 ]
             };
+            // Reactome shares KE-WP's four-question instrument — the same four
+            // columns, written at creation — so it asks the same questions
+            // rather than a Reactome-shaped copy of them (#245).
+            ASSESSMENT_QUESTIONS.reactome = ASSESSMENT_QUESTIONS.wp;
 
             // The answers currently stored on the mapping, keyed to match the
             // question names above so the modal can show what is being changed.
             // The proposer could not see this before — the entry dump does not
             // include the assessment at all.
             function currentAnswers(entry, mappingType) {
-                if (mappingType === 'wp') {
+                if (mappingType === 'wp' || mappingType === 'reactome') {
                     var a = entry.assessment || {};
                     return {
                         step1: a.relationship, step2: a.basis,
@@ -864,10 +868,6 @@
                 if (formEl) { formEl.reset(); }
                 $("#entryDetails").val(JSON.stringify(entry, null, 2));
 
-                // Reactome revisions are still deletion-only: its approve route
-                // rejects anything else and ReactomeMappingModel has no update
-                // path, so there is nothing for an assessment to reach. Enabling
-                // them is the second half of #245.
                 renderAssessment(entry, mappingType);
                 syncDeletionState();
 
@@ -912,16 +912,15 @@
                 }, 'go');
             });
 
-            // KE-Reactome: entry built from the AJAX-rendered button's data-* attrs.
+            // KE-Reactome: row data is the AJAX object held by the DataTable, as
+            // for KE-WikiPathways. It was hand-rebuilt from the button's data-*
+            // attributes while the modal only needed an id to delete by; a
+            // revision needs the row's stored assessment to show what it is
+            // changing, and the row already carries it (#245).
             $('#reactomeDatasetTable').on('click', '.propose-change-reactome', function() {
-                var b = $(this);
-                openProposalModal({
-                    ke_id: b.data('ke-id'),
-                    ke_title: b.data('ke-title'),
-                    reactome_id: b.data('reactome-id'),
-                    pathway_name: b.data('pathway-name'),
-                    confidence_level: b.data('confidence')
-                }, 'reactome');
+                var entry = $('#reactomeDatasetTable').DataTable()
+                                .row($(this).closest('tr')).data() || {};
+                openProposalModal(entry, 'reactome');
             });
 
             $("#modalOverlay").on("click", closeModal);

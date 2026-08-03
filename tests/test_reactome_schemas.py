@@ -99,8 +99,19 @@ class TestReactomeMappingSchema:
         assert loaded["step3"] == "specific"
         assert loaded["step4"] == "complete"
 
-    def test_accepts_connection_type_optional(self, schema):
-        """ReactomeMappingSchema should accept connection_type as optional."""
+    def test_rejects_connection_type(self, schema):
+        """Reactome has no connection type (#248).
+
+        The field used to be declared here and validated, then discarded —
+        `ke_reactome_mappings` has no such column and the proposal model no such
+        parameter. Accepting it only created the impression that the value went
+        somewhere. Rejecting it is the honest behaviour: a client sending one is
+        told, rather than watching it vanish.
+
+        The relationship answer is `step1`, stored as `proposed_relationship`.
+        """
+        from marshmallow import ValidationError
+
         data = {
             "ke_id": "KE 12345",
             "ke_title": "x",
@@ -109,8 +120,9 @@ class TestReactomeMappingSchema:
             "confidence_level": "high",
             "connection_type": "causative",
         }
-        loaded = schema.load(data)
-        assert loaded["connection_type"] == "causative"
+        with pytest.raises(ValidationError) as excinfo:
+            schema.load(data)
+        assert "connection_type" in excinfo.value.messages
 
     def test_rejects_invalid_step1(self, schema):
         """Step1 out-of-whitelist value should raise ValidationError."""
