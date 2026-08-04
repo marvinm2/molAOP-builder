@@ -37,14 +37,22 @@
             <p>When you authenticate via OAuth and submit a proposal, the application stores:</p>
             <ul>
                 <li><strong>Your provider-prefixed username</strong> (e.g. <code>github:alice</code>,
-                    <code>orcid:0000-0003-2230-0840</code>) — the stable identifier for your contributions.</li>
-                <li><strong>The name you entered</strong> on the proposal form — used for attribution on
-                    approved mappings.</li>
+                    <code>orcid:0000-0003-2230-0840</code>) — the stable identifier for your contributions.
+                    <em>This is the only one of these fields that is published.</em> It appears on the
+                    approved mapping, in the public REST API, and in the exported datasets.</li>
+                <li><strong>The name you entered</strong> on the proposal form — held on the proposal
+                    record so a reviewer can recognise who submitted it. Not published.</li>
                 <li><strong>Your email address</strong> — used so an administrator can contact you about an
-                    ambiguous or rejected proposal.</li>
-                <li><strong>Your institutional affiliation</strong> (optional) — surfaced on the public
-                    provenance record of an approved mapping.</li>
+                    ambiguous or rejected proposal. Not published.</li>
+                <li><strong>Your institutional affiliation</strong> — held on the proposal record as
+                    internal context for review. Not published.</li>
             </ul>
+            <p>
+                &ldquo;Not published&rdquo; means the field is stored in the application database and is
+                visible to administrators reviewing proposals, but is not served by the public API, does not
+                appear in any CSV, GMT, Parquet or RDF export, and is not included in the Zenodo deposit.
+                Public attribution of a mapping rests entirely on the provider-prefixed username above.
+            </p>
             <p>
                 The legal basis under the General Data Protection Regulation (GDPR) is
                 <strong>performance of a contract</strong>: you choose to authenticate, submit a proposal,
