@@ -1,4 +1,25 @@
-.PHONY: help install test lint run docker-build docker-run clean capture-versions backfill-versions go-hierarchy go-corpus wp-corpus wp-annotations ke-corpus ke-corpus-refresh ke-metadata check-releases refresh-stale-corpora
+.PHONY: help install test lint run docker-build docker-run clean capture-versions backfill-versions go-hierarchy go-corpus mf-corpus wp-corpus wp-annotations ke-corpus ke-corpus-refresh ke-metadata check-releases refresh-stale-corpora
+
+# GO MF has no size ceiling, on purpose.
+#
+# `go-corpus` ends with subset_go_corpus.py, which cuts go_bp_metadata.json down
+# to the [MIN_GENES, MAX_GENES] = [10, 500] band. `mf-corpus` deliberately omits
+# that step, so go_mf_metadata.json holds the whole namespace (~10.1k terms) and
+# every MF term stays rankable.
+#
+# Why the BP reasoning does not carry over: the ceiling exists because
+# go_bp_metadata.json is enumerated as the candidate set by the ranking paths,
+# and BP unfiltered is ~24k terms. MF is less than half that. More importantly
+# `go_mf.hybrid_weights.gene` is 0.0 (scoring_config.yaml), so gene overlap is a
+# display-only chip for MF and does not enter the score — which is what the
+# ceiling was protecting against. An umbrella term like GO:0003824 "catalytic
+# activity" (5,614 genes after closure) can therefore sit in the corpus without
+# distorting ranking, and _filter_redundant_ancestors prunes it whenever a
+# descendant scores comparably.
+#
+# The cost is real but bounded: ~10.1k candidates scored per request instead of
+# a filtered subset, and generic MF terms are reachable. That was the intent.
+# If MF ever moves off gene: 0.0, revisit this.
 
 help:		## Show this help
 	@echo "Available targets:"
@@ -43,6 +64,11 @@ go-hierarchy:	## Build GO hierarchy data (IC scores, ancestors, depths) + the fu
 go-corpus:	## Rebuild the GO BP corpora (hierarchy + search index -> filtered IDs -> subset embeddings/metadata)
 	python scripts/precompute_go_hierarchy.py
 	python scripts/subset_go_corpus.py
+
+mf-corpus:	## Rebuild the GO MF corpus (annotations -> hierarchy/IC -> embeddings). Deliberately NOT subsetted — see below
+	python scripts/download_go_annotations.py --namespace mf
+	python scripts/precompute_go_hierarchy.py --namespace mf
+	python scripts/precompute_go_embeddings.py --namespace mf
 
 wp-corpus:	## Rebuild the WikiPathways corpus (annotations -> title embeddings -> combined embeddings). Metadata holds every pathway; the size filter marks which are rankable
 	python scripts/download_wikipathways_annotations.py
