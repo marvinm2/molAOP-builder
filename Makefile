@@ -1,25 +1,32 @@
 .PHONY: help install test lint run docker-build docker-run clean capture-versions backfill-versions go-hierarchy go-corpus mf-corpus wp-corpus wp-annotations ke-corpus ke-corpus-refresh ke-metadata check-releases refresh-stale-corpora
 
-# GO MF has no size ceiling, on purpose.
+# NEITHER GO namespace has a size ceiling, on purpose. Decided 2026-08-04.
 #
-# `go-corpus` ends with subset_go_corpus.py, which cuts go_bp_metadata.json down
-# to the [MIN_GENES, MAX_GENES] = [10, 500] band. `mf-corpus` deliberately omits
-# that step, so go_mf_metadata.json holds the whole namespace (~10.1k terms) and
-# every MF term stays rankable.
+# `subset_go_corpus.py` cuts go_bp_metadata.json down to the
+# [MIN_GENES, MAX_GENES] = [10, 500] band. It is no longer in either target, so
+# both go_bp_metadata.json (~24.5k terms) and go_mf_metadata.json (10,123) hold
+# their whole namespace and every GO term stays rankable.
 #
-# Why the BP reasoning does not carry over: the ceiling exists because
-# go_bp_metadata.json is enumerated as the candidate set by the ranking paths,
-# and BP unfiltered is ~24k terms. MF is less than half that. More importantly
-# `go_mf.hybrid_weights.gene` is 0.0 (scoring_config.yaml), so gene overlap is a
-# display-only chip for MF and does not enter the score — which is what the
-# ceiling was protecting against. An umbrella term like GO:0003824 "catalytic
-# activity" (5,614 genes after closure) can therefore sit in the corpus without
-# distorting ranking, and _filter_redundant_ancestors prunes it whenever a
-# descendant scores comparably.
+# Why the ceiling stopped making sense: it was designed under v1.4, when gene
+# overlap carried real ranking weight (bp 0.45, mf 0.40) and an umbrella term
+# like GO:0003824 "catalytic activity" — 5,614 genes after closure — could
+# dominate gene evidence. v1.5 made ranking pure-semantic: `hybrid_weights.gene`
+# is now 0.0 for BOTH namespaces, so gene overlap is a display-only chip and the
+# blow-up the ceiling existed to prevent cannot reach the score at all.
 #
-# The cost is real but bounded: ~10.1k candidates scored per request instead of
-# a filtered subset, and generic MF terms are reachable. That was the intent.
-# If MF ever moves off gene: 0.0, revisit this.
+# What remains is a candidate-set argument — more terms in the thin score band
+# that #221 documents — and the answer to that is a better encoder, not a filter
+# that also makes valid terms unreachable. The band cut BOTH tails: screening a
+# 196-term curated KE→GO set found 62 (32%) unreachable by any route, including
+# PPAR signaling (9 genes) and hepatocyte proliferation (5).
+#
+# This also makes `make go-corpus` agree with the weekly cron. The cron's
+# gene_ontology rebuild never ran subset_go_corpus.py, so the two paths produced
+# different corpora and a manual rebuild silently re-narrowed what the cron had
+# widened — which is how the discrepancy in #284 arose.
+#
+# subset_go_corpus.py is kept, unreferenced, so the band can be reapplied by
+# hand. If either namespace ever moves off gene: 0.0, revisit this.
 
 help:		## Show this help
 	@echo "Available targets:"
@@ -61,11 +68,12 @@ migrate:	## Run database migration
 go-hierarchy:	## Build GO hierarchy data (IC scores, ancestors, depths) + the full-namespace search index
 	python scripts/precompute_go_hierarchy.py
 
-go-corpus:	## Rebuild the GO BP corpora (hierarchy + search index -> filtered IDs -> subset embeddings/metadata)
+go-corpus:	## Rebuild the GO BP corpus (hierarchy + search index -> embeddings). Not subsetted — see below
 	python scripts/precompute_go_hierarchy.py
-	python scripts/subset_go_corpus.py
+	python scripts/download_go_annotations.py
+	python scripts/precompute_go_embeddings.py
 
-mf-corpus:	## Rebuild the GO MF corpus (annotations -> hierarchy/IC -> embeddings). Deliberately NOT subsetted — see below
+mf-corpus:	## Rebuild the GO MF corpus (annotations -> hierarchy/IC -> embeddings). Not subsetted — see below
 	python scripts/download_go_annotations.py --namespace mf
 	python scripts/precompute_go_hierarchy.py --namespace mf
 	python scripts/precompute_go_embeddings.py --namespace mf
