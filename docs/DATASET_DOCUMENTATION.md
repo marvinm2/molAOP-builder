@@ -423,7 +423,7 @@ The Builder re-uses four external knowledge resources at runtime. Each carries i
 - **AOP-Wiki**: Creative Commons Attribution 4.0 International (CC BY 4.0) *(citation pending verification)*
 - **WikiPathways**: Creative Commons Zero 1.0 Universal (CC0 1.0, Public Domain)
 - **Gene Ontology** (incl. UniProt-GOA human annotations): Creative Commons Attribution 4.0 International (CC BY 4.0)
-- **Reactome**: Creative Commons Attribution 4.0 International (CC BY 4.0)
+- **Reactome**: Creative Commons Zero 1.0 Universal (CC0 1.0, Public Domain). Verified against [reactome.org/license](https://reactome.org/license) clause 1(c), "All data in the Reactome database and files derived from that data are licensed under the Creative Commons Public Domain Dedication (CC0)". The CC BY 4.0 on that page (clause 1a) covers Reactome's pathway illustrations, icon library, art and branding — none of which this project redistributes.
 
 The curated mapping dataset itself is released under CC0 (above); the upstream licences govern any direct re-distribution of unmodified source data, not the curated KE → resource mappings produced by the Builder.
 
