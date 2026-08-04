@@ -88,15 +88,28 @@ REBUILD = {
         ],
     },
     "gene_ontology": {
+        # Both namespaces. MF was absent from this list until 2026-08-04, so a GO
+        # release rebuilt BP and left MF untouched — which is survivable only while
+        # MF has no corpus at all. It has one now.
+        #
+        # subset_go_corpus.py is deliberately absent: neither namespace is size-
+        # filtered (see the Makefile header). It was never here, which is what made
+        # the cron and `make go-corpus` disagree (#284).
         "commands": [
             ["python", "scripts/precompute_go_hierarchy.py"],
             ["python", "scripts/download_go_annotations.py"],
             ["python", "scripts/precompute_go_embeddings.py"],
+            ["python", "scripts/precompute_go_hierarchy.py", "--namespace", "mf"],
+            ["python", "scripts/download_go_annotations.py", "--namespace", "mf"],
+            ["python", "scripts/precompute_go_embeddings.py", "--namespace", "mf"],
         ],
         "artifacts": [
             "data/go_bp_embeddings.npz",
             "data/go_bp_name_embeddings.npz",
             "data/go_bp_metadata.json",
+            "data/go_mf_embeddings.npz",
+            "data/go_mf_name_embeddings.npz",
+            "data/go_mf_metadata.json",
         ],
     },
     "reactome": {

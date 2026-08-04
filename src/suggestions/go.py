@@ -64,16 +64,26 @@ class GoSuggestionService:
         self.go_metadata = {}
         self.go_gene_annotations = {}
 
-        # Full-namespace search index. Distinct from go_metadata ON PURPOSE:
-        # go_metadata is the [MIN_GENES, MAX_GENES] suggestion corpus, and several
-        # ranking paths enumerate it as "the candidate set" (see
-        # _compute_gene_overlap_scores_for), so widening it would silently push
-        # ~24k unranked terms into the Suggested list. Search has no such coupling —
-        # it is a SequenceMatcher over name + definition and touches no embeddings —
-        # so it can safely span the whole namespace, which is what lets a curator
-        # reach a term the gene-count filter excluded.
-        # Falls back to go_metadata when the artifact is absent, preserving the old
-        # (subsetted) search behaviour rather than breaking search outright.
+        # Full-namespace search index. Historically distinct from go_metadata,
+        # which used to be the [MIN_GENES, MAX_GENES] suggestion corpus while this
+        # spanned the whole namespace, so a curator could still reach a term the
+        # gene-count band excluded.
+        #
+        # As of 2026-08-04 the band is not applied to either namespace, so the two
+        # now hold nearly the same term set and this index is close to redundant.
+        # It is kept because the distinction is real in principle — search is a
+        # SequenceMatcher over name + definition and touches no embeddings, so it
+        # can always span more than the ranked corpus — and because reinstating a
+        # band by hand (subset_go_corpus.py still exists) must not silently make
+        # terms unsearchable again.
+        #
+        # Why the band went: it was designed under v1.4, when gene overlap carried
+        # real ranking weight and an umbrella term could dominate gene evidence.
+        # v1.5 made ranking pure-semantic — hybrid_weights.gene is 0.0 for BP and
+        # MF alike — so the blow-up it guarded against cannot reach the score.
+        # What is left is candidate-set dilution in the thin band #221 documents,
+        # against a filter that also cut 32% of a curated KE→GO set out of reach.
+        # Falls back to go_metadata when the artifact is absent.
         self.go_search_metadata = {}
 
         self._load_go_embeddings(go_embeddings_path)
