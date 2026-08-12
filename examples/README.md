@@ -74,7 +74,7 @@ Open `index.html` in a web browser to see a complete interactive demonstration o
 
 ### 1. REST API
 ```
-Base URL: https://ke-wp-mapping.org/api/v1/
+Base URL: https://molaop-builder.vhp4safety.nl/api/v1/
 ```
 
 **Core Endpoints:**
@@ -84,17 +84,25 @@ Base URL: https://ke-wp-mapping.org/api/v1/
 - `POST /mappings` - Create new mapping (auth required)
 
 ### 2. Data Export
-```
-Export URL: https://ke-wp-mapping.org/export/{format}
-```
 
-**Available Formats:**
-- **JSON** - Comprehensive data with metadata
-- **CSV** - Tabular format for analysis
-- **Excel** - Multi-sheet workbook with documentation
-- **Parquet** - Optimized for analytics
-- **RDF/Turtle** - Semantic web formats
-- **JSON-LD** - Linked data format
+**Working today** — these serve the current mapping state and are what the Downloads
+page links to:
+
+| What | URL |
+|---|---|
+| CSV of all mappings | `https://molaop-builder.vhp4safety.nl/download` |
+| Gene sets, GMT | `/exports/gmt/ke-wp`, `/exports/gmt/ke-go`, `/exports/gmt/ke-reactome` (each also `-centric`) |
+| Mappings with provenance, Turtle | `/exports/rdf/ke-wp`, `/exports/rdf/ke-go`, `/exports/rdf/ke-reactome` |
+| Approved mappings, JSON | `/api/v1/mappings` (paginated) |
+
+**Not yet available** — the generic `/export/{format}` route (and with it the Excel,
+Parquet and JSON-LD formats) answers `500` because the metadata manager is unconfigured;
+`/export/formats`, `/dataset/metadata` and `/dataset/datacite` likewise. Tracked in
+[#160](https://github.com/marvinm2/molAOP-builder/issues/160). This section previously
+listed those six formats as available, against a base URL that did not resolve either.
+
+For bulk re-use prefer the Zenodo deposit, which bundles the GMT and Turtle exports per
+resource and is citable: [10.5281/zenodo.20184643](https://doi.org/10.5281/zenodo.20184643).
 
 ### 3. Direct Database Access
 - SQLite database file: `ke_wp_mapping.db`
@@ -253,7 +261,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 class ResilientKEWPClient(KEWPDatasetClient):
-    def __init__(self, base_url="https://ke-wp-mapping.org"):
+    def __init__(self, base_url="https://molaop-builder.vhp4safety.nl"):
         super().__init__(base_url)
         
         # Configure retry strategy

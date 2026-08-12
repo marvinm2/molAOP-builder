@@ -1,5 +1,21 @@
 # Releasing the curated dataset to Zenodo
 
+> **This is one of two Zenodo channels. Check you are in the right runbook.**
+>
+> | | Deposits | Runbook | Concept DOI |
+> |---|---|---|---|
+> | **Dataset** | the curated KE → WikiPathways / GO / Reactome mappings, as GMT + Turtle | **this file** | [10.5281/zenodo.20184643](https://doi.org/10.5281/zenodo.20184643) |
+> | **Software** | this repository's source, archived from a GitHub Release | [`docs/SOFTWARE-RELEASES.md`](SOFTWARE-RELEASES.md) | minted at the first release |
+>
+> They are separate records with separate DOIs, separate licences (dataset CC0, code
+> GPL-2.0-only) and separate triggers: the dataset is deposited by
+> [`scripts/publish_zenodo.py`](../scripts/publish_zenodo.py) against the live database,
+> while the software is archived automatically by Zenodo's GitHub webhook when a Release is
+> published. Nothing in this file applies to the software archive.
+>
+> Cite the **dataset** DOI when you have used the mappings, and the **software** DOI when you
+> have used or extended the application.
+
 Runbook for cutting a new version of the curated KE → WikiPathways / GO / Reactome
 mapping database. For the data-management policy that sits behind these mechanics
 see [`docs/DMP.md`](DMP.md); for the dataset's schema and re-use guidance see
@@ -8,7 +24,8 @@ see [`docs/DMP.md`](DMP.md); for the dataset's schema and re-use guidance see
 ## What gets released
 
 - **Concept DOI** [`10.5281/zenodo.20184643`](https://doi.org/10.5281/zenodo.20184643)
-  — stable, always resolves to the latest version. This is the citation target.
+  — stable, always resolves to the latest version. This is the citation target **for the
+  dataset**; the software has its own concept DOI (see the box at the top of this file).
 - **Version DOI** — a fresh DOI per release, recorded in `data/zenodo_meta.json`.
 - **License**: CC0 1.0 Universal · **Access**: open.
 - **Structure**: three per-resource ZIP archives plus a top-level README:

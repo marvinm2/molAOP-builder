@@ -4,7 +4,8 @@
 [![Docker Build & Test](https://github.com/marvinm2/molAOP-builder/actions/workflows/docker.yml/badge.svg)](https://github.com/marvinm2/molAOP-builder/actions/workflows/docker.yml)
 [![Code Quality](https://github.com/marvinm2/molAOP-builder/actions/workflows/code-quality.yml/badge.svg)](https://github.com/marvinm2/molAOP-builder/actions/workflows/code-quality.yml)
 [![Security & Compliance](https://github.com/marvinm2/molAOP-builder/actions/workflows/security.yml/badge.svg)](https://github.com/marvinm2/molAOP-builder/actions/workflows/security.yml)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20184643.svg)](https://doi.org/10.5281/zenodo.20184643)
+[![Software DOI](https://zenodo.org/badge/914268100.svg)](https://zenodo.org/badge/latestdoi/914268100)
+[![Dataset DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20184643.svg)](https://doi.org/10.5281/zenodo.20184643)
 
 Curator-in-the-loop tooling for building **molecular Adverse Outcome Pathways** — the
 layer that connects the Key Events of an AOP to the molecular pathways and processes
@@ -90,7 +91,11 @@ exportable as GMT (for fgsea/clusterProfiler) and RDF/TTL (for SPARQL).
 
 ### Security & Authentication
 
-- **OAuth Sign-in**: GitHub OAuth in production today; the codebase also supports ORCID, LS Login, and SURFconext OIDC providers — they activate automatically once their respective `*_CLIENT_ID` / `*_CLIENT_SECRET` environment variables are set.
+- **OAuth Sign-in**: **GitHub only** in production. ORCID, LS Login and SURFconext are
+  implemented but not provisioned ([#101](https://github.com/marvinm2/molAOP-builder/issues/101)) —
+  the login modal shows two "coming soon" buttons and no SURFconext button. Setting their
+  credentials is **not** sufficient to enable them safely; see
+  [Authentication](#authentication) before you try.
 - **Provider-Prefixed Identity**: Usernames stored as `provider:name` (e.g. `github:alice`) to prevent collisions when additional providers are enabled
 - **Role-based Access Control**: Admin dashboard for proposal management with proper Docker deployment support
 - **CSRF Protection**: Comprehensive security against cross-site attacks
@@ -144,7 +149,12 @@ All workflows run automatically on push to main branch and can be triggered manu
 - Git
 - GitHub account (for OAuth)
 
-> **Note:** The initial clone is ~170 MB due to pre-computed embedding files.
+> **Note:** The clone is small (~5 MB) — the pre-computed embedding corpora are **not** in
+> git. `.gitignore` excludes `data/*.npz`, `data/*.npy` and most of `data/*.json`, so a fresh
+> clone contains four small reference files and no corpora at all. Building them is a
+> separate step, described below; an earlier version of this note claimed a ~170 MB clone
+> "due to pre-computed embedding files", which was wrong in both directions and hid the fact
+> that there is a build step.
 
 ### Installation & Setup
 
@@ -207,14 +217,37 @@ All workflows run automatically on push to main branch and can be triggered manu
    RATELIMIT_STORAGE_URL=memory:// # rate-limit backend
    ```
 
-6. **Launch the application:**
+6. **Build the suggestion corpora** (optional for a first look, required for suggestions):
+
+   The BioBERT embeddings that rank candidate pathways and GO terms are **not** in the
+   repository — they are large, regenerable, and derived from upstream releases that move.
+   The application starts and every page works without them; what you lose is the ranked
+   suggestion list, which is most of the point of the tool. The test suite runs without them
+   too, which is why CI is green on a checkout that has none.
+
+   ```bash
+   make ke-metadata   # Key Event snapshot from AOP-Wiki. Fast, no BioBERT — do this first
+   make ke-corpus     # KE embeddings (title-only + with-description)
+   make wp-corpus     # WikiPathways corpus
+   make go-corpus     # GO Biological Process corpus
+   make mf-corpus     # GO Molecular Function corpus
+   ```
+
+   Each `*-corpus` target runs BioBERT over the upstream release and takes appreciable time
+   and memory; `make ke-metadata` does not and is enough to populate the Key Event dropdown.
+   Reactome has no Makefile target yet ([#225](https://github.com/marvinm2/molAOP-builder/issues/225)) —
+   run `scripts/download_reactome_annotations.py` then
+   `scripts/precompute_reactome_embeddings.py`, in that order. `make check-releases` reports
+   which corpora are behind their upstream source without rebuilding anything.
+
+7. **Launch the application:**
    ```bash
    chmod +x start.sh
    ./start.sh
    ```
    Or run directly with `python app.py`.
 
-7. **Access the application:**
+8. **Access the application:**
    - Open: http://localhost:5000
    - Click "Login" and sign in with GitHub (or with whichever additional OAuth providers you have configured — see the `*_CLIENT_ID` env vars below)
    - Start mapping Key Events to WikiPathways, GO terms or Reactome pathways!
@@ -342,11 +375,18 @@ Unauthenticated, 100 requests/hour/IP. This is the contract the
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/export/<format>` | GET | Export dataset (csv, tsv, json, excel, rdf) |
-| `/export/formats` | GET | List available export formats |
-| `/dataset/metadata` | GET | Dataset metadata |
-| `/dataset/versions` | GET | Dataset version history |
-| `/dataset/citation` | GET | Citation information |
+| `/download` | GET | All mappings as CSV |
+| `/exports/gmt/ke-wp` | GET | KE → WikiPathways gene sets (GMT). Also `ke-go`, `ke-reactome`, and a `-centric` variant of each |
+| `/exports/rdf/ke-wp` | GET | KE → WikiPathways mappings with curation provenance (Turtle). Also `ke-go`, `ke-reactome` |
+| `/api/v1/mappings` | GET | Approved mappings, paginated and filterable (JSON or CSV) |
+
+> **Not implemented — do not build against these.** `/export/<format>` and `/export/formats`
+> answer `500`, and `/dataset/metadata`, `/dataset/versions` and `/dataset/citation` answer
+> `503`, because the metadata manager is unconfigured ([#160](https://github.com/marvinm2/molAOP-builder/issues/160)).
+> This table used to list those five as though they worked, which is how the Excel, Parquet
+> and JSON-LD formats came to be advertised in several places without ever being reachable.
+> For citation metadata, use DOI content negotiation against the dataset DOI — see
+> [`docs/DATASET_DOCUMENTATION.md`](docs/DATASET_DOCUMENTATION.md) § Citation.
 
 ### Monitoring Endpoints
 
@@ -358,7 +398,8 @@ Unauthenticated, 100 requests/hour/IP. This is the contract the
 
 ## Security Features
 
-- **OAuth 2.0 / OIDC**: GitHub today; ORCID, LS Login, and SURFconext supported in code and activated by setting their `*_CLIENT_ID` / `*_CLIENT_SECRET` env vars
+- **OAuth 2.0 / OIDC**: GitHub in production. See [Authentication](#authentication) for why the
+  other three providers need more than credentials to switch on
 - **CSRF Protection**: All forms protected with tokens
 - **Input Validation**: Marshmallow schema validation
 - **SQL Injection Prevention**: Parameterized queries
@@ -367,6 +408,36 @@ Unauthenticated, 100 requests/hour/IP. This is the contract the
 - **Session Security**: HTTPOnly, Secure, SameSite cookies
 
 ## Configuration
+
+### Authentication
+
+Production runs **GitHub OAuth only**. ORCID, LS Login and SURFconext are implemented in code
+but not provisioned ([#101](https://github.com/marvinm2/molAOP-builder/issues/101)).
+
+If you are enabling one of the other three on your own deployment, **setting `*_CLIENT_ID` and
+`*_CLIENT_SECRET` is not enough, and getting it wrong fails silently in the worst possible
+way.** Each provider's *default* discovery URL is a sandbox or test endpoint — see
+`src/core/config.py:51-86` and `src/services/container.py:27-34`:
+
+| Provider | Default discovery URL if you do not set one |
+|---|---|
+| ORCID | `https://sandbox.orcid.org/.well-known/openid-configuration` |
+| SURFconext | `https://connect.test.surfconext.nl/.well-known/openid-configuration` |
+| LS Login | test endpoint, same pattern |
+
+Supplying credentials without also setting the matching `*_DISCOVERY_URL` therefore points
+your deployment at a **sandbox identity provider**. Login appears to work, and every identity
+it mints is a sandbox identity — written into the provenance of the mappings those users
+propose and approve, where it is indistinguishable from a real one after the fact. Always set
+`*_DISCOVERY_URL` alongside the credentials.
+
+Two further consequences of adding a provider:
+
+- `ADMIN_USERS` entries are provider-prefixed and currently all `github:`. An admin who signs
+  in through a newly enabled provider arrives as a different identity and will not be an
+  admin until their other identity is added.
+- Curator identity in the mapping provenance is provider-prefixed too, so the same person
+  signing in via two providers appears as two curators.
 
 ### Environment Variables
 
@@ -381,11 +452,14 @@ Unauthenticated, 100 requests/hour/IP. This is the contract the
 | `PORT` | Server port | `5000` | No |
 | `DATABASE_PATH` | SQLite database path | `ke_wp_mapping.db` | No |
 | `RATELIMIT_STORAGE_URL` | Rate limiting backend | `memory://` | No |
-| `ORCID_CLIENT_ID` | ORCID OAuth client ID | - | No |
+| `ORCID_CLIENT_ID` | ORCID OAuth client ID — **set `ORCID_DISCOVERY_URL` too, see [Authentication](#authentication)** | - | No |
 | `ORCID_CLIENT_SECRET` | ORCID OAuth client secret | - | No |
-| `LS_CLIENT_ID` | LS Login OAuth client ID | - | No |
+| `ORCID_DISCOVERY_URL` | ORCID OIDC discovery document | **sandbox** | Whenever `ORCID_CLIENT_ID` is set |
+| `LS_CLIENT_ID` | LS Login OAuth client ID — **set `LS_DISCOVERY_URL` too** | - | No |
 | `LS_CLIENT_SECRET` | LS Login OAuth client secret | - | No |
-| `SURF_CLIENT_ID` | SURFconext OAuth client ID | - | No |
+| `LS_DISCOVERY_URL` | LS Login OIDC discovery document | **test** | Whenever `LS_CLIENT_ID` is set |
+| `SURF_DISCOVERY_URL` | SURFconext OIDC discovery document | **test** | Whenever `SURF_CLIENT_ID` is set |
+| `SURF_CLIENT_ID` | SURFconext OAuth client ID — **set `SURF_DISCOVERY_URL` too** | - | No |
 | `SURF_CLIENT_SECRET` | SURFconext OAuth client secret | - | No |
 
 ### Configuration Classes
@@ -526,12 +600,67 @@ chmod +x start.sh
 - **Issues**: [GitHub Issues](https://github.com/marvinm2/molAOP-builder/issues)
 - **Documentation**: This README and inline code documentation
 - **Data Management Plan**: [`docs/DMP.md`](docs/DMP.md) (Horizon Europe / Science Europe template)
-- **Release Runbook**: [`docs/RELEASES.md`](docs/RELEASES.md) (how to cut a new Zenodo version)
+- **Dataset release runbook**: [`docs/RELEASES.md`](docs/RELEASES.md) (depositing a new version of the curated mappings)
+- **Software release runbook**: [`docs/SOFTWARE-RELEASES.md`](docs/SOFTWARE-RELEASES.md) (tagging and archiving this repository)
 - **Contact**: [marvin.martens@maastrichtuniversity.nl]
+
+## How to cite
+
+**There are two DOIs and they are not interchangeable.** Cite whichever you actually used;
+cite both if you used both.
+
+| You used… | Cite | DOI |
+|---|---|---|
+| the **application** — ran it, self-hosted it, extended it, or are describing the method | the software | see the *Software DOI* badge above |
+| the **mappings** — analysed them, built on them, or report numbers derived from them | the dataset | [10.5281/zenodo.20184643](https://doi.org/10.5281/zenodo.20184643) |
+
+Both are **concept DOIs**: they always resolve to the newest version. If you need the exact
+state you worked with, take the version DOI of that release from the Zenodo record instead —
+that is the citation that stays reproducible.
+
+The dataset DOI predates the software one, so anything published before this repository's
+first archived release cites the dataset by necessity, not by choice. `CITATION.cff` in the
+repository root carries the machine-readable form, which is what GitHub's "Cite this
+repository" button reads.
+
+Key Event titles inside the dataset are reproduced from AOP-Wiki under CC BY-SA 4.0 — see
+[Licensing](docs/DATASET_DOCUMENTATION.md#licensing) — so cite AOP-Wiki as well when you use
+them.
+
+## Acknowledgements
+
+Part of the [VHP4Safety](https://www.vhp4safety.nl) project, funded by the Dutch Research
+Council (NWO) under the *Netherlands Research Agenda: Research on Routes by Consortia*
+programme, grant **NWA-ORC 1292.19.272**.
+
+Developed at the Department of Translational Genomics, Maastricht University. The curated
+mappings are the work of the curators and administrators who proposed and reviewed them; the
+per-mapping provenance in the dataset records who did which.
 
 ## License
 
-This project is licensed under the GPL-2.0 License - see the LICENSE file for details.
+Copyright (C) 2026 Marvin Martens
+
+This program is free software; you can redistribute it and/or modify it under the terms of
+the GNU General Public License **version 2** as published by the Free Software Foundation.
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+See the [`LICENSE`](LICENSE) file for the full text.
+
+SPDX identifier: `GPL-2.0-only`. Version 2 only, not "or any later version" — no source file
+in this repository carries the "or later" clause, so that is what the code is actually
+offered under.
+
+The `LICENSE` file is the unmodified GPL-2.0 text and is deliberately left that way: the
+`Copyright (C) <year> <name of author>` line inside its "How to Apply These Terms to Your New
+Programs" appendix is the FSF's template for you to copy into your own files, not a blank to
+fill in — the licence header states that changing the licence document is not permitted. The
+operative copyright notice is the one above.
+
+**The dataset is licensed separately.** The curated mappings are CC0 1.0, except Key Event
+titles reproduced from AOP-Wiki under CC BY-SA 4.0. See
+[`docs/DATASET_DOCUMENTATION.md`](docs/DATASET_DOCUMENTATION.md) § Licensing. Code and data
+licences must not be conflated.
 
 ## Acknowledgments
 

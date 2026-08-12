@@ -146,7 +146,7 @@ The confidence assessment follows a structured workflow evaluating:
 ## Access Methods
 
 ### Web Interface
-- **Main Application**: https://ke-wp-mapping.org/
+- **Main Application**: https://molaop-builder.vhp4safety.nl/
 - **Features**: Interactive mapping creation, confidence assessment, data exploration
 - **Authentication**: GitHub OAuth for contributions
 - **Export Options**: Multiple format downloads
@@ -281,7 +281,7 @@ import requests
 import pandas as pd
 
 # Get all mappings with pagination
-response = requests.get("https://ke-wp-mapping.org/api/v1/mappings?per_page=100")
+response = requests.get("https://molaop-builder.vhp4safety.nl/api/v1/mappings?per_page=100")
 data = response.json()
 mappings = data["data"]
 
@@ -293,29 +293,39 @@ print(f"Retrieved {len(df)} mappings")
 #### Filtering and Search
 ```python
 # Search for oxidative stress related mappings
-response = requests.get("https://ke-wp-mapping.org/api/v1/mappings?search=oxidative stress")
+response = requests.get("https://molaop-builder.vhp4safety.nl/api/v1/mappings?search=oxidative stress")
 oxidative_mappings = response.json()["data"]
 
 # Filter by high confidence causative relationships  
-response = requests.get("https://ke-wp-mapping.org/api/v1/mappings?confidence_level=high&connection_type=causative")
+response = requests.get("https://molaop-builder.vhp4safety.nl/api/v1/mappings?confidence_level=high&connection_type=causative")
 high_confidence = response.json()["data"]
 ```
 
 #### Data Export
 ```python
-# Download comprehensive JSON export
-response = requests.get("https://ke-wp-mapping.org/export/json")
-with open("ke_wp_dataset.json", "w") as f:
-    f.write(response.text)
+BASE = "https://molaop-builder.vhp4safety.nl"
 
-# Download Parquet for analytics
-response = requests.get("https://ke-wp-mapping.org/export/parquet")
-with open("ke_wp_dataset.parquet", "wb") as f:
+# All mappings as CSV
+response = requests.get(f"{BASE}/download")
+with open("ke_wp_dataset.csv", "wb") as f:
     f.write(response.content)
-    
-# Load Parquet with pandas
-df = pd.read_parquet("ke_wp_dataset.parquet")
+df = pd.read_csv("ke_wp_dataset.csv")
+
+# Gene sets for fgsea / clusterProfiler (GMT). Swap ke-wp for ke-go or
+# ke-reactome; each also has a -centric variant keyed on the Key Event.
+response = requests.get(f"{BASE}/exports/gmt/ke-wp")
+with open("KE-WP.gmt", "wb") as f:
+    f.write(response.content)
+
+# Mappings with full curation provenance (Turtle)
+response = requests.get(f"{BASE}/exports/rdf/ke-wp")
+with open("KE-WP.ttl", "wb") as f:
+    f.write(response.content)
 ```
+
+> The `/export/json` and `/export/parquet` calls this section used to show answer `500` on
+> the live service — the generic `/export/<format>` route needs a metadata manager that is
+> not configured (#160). For Parquet and Excel, take them from the Zenodo deposit instead.
 
 ### R Examples
 
@@ -326,7 +336,7 @@ library(jsonlite)
 library(arrow)
 
 # Get mappings data
-response <- GET("https://ke-wp-mapping.org/api/v1/mappings?per_page=1000")
+response <- GET("https://molaop-builder.vhp4safety.nl/api/v1/mappings?per_page=1000")
 data <- fromJSON(content(response, "text"))
 mappings <- data$data
 
@@ -386,26 +396,48 @@ const displayMappings = (mappings) => {
 
 ## Citation
 
+Cite the **dataset**, not the application, when you have used the mappings. The two are
+separate Zenodo deposits with separate DOIs; see [`docs/RELEASES.md`](RELEASES.md) for which
+is which.
+
+Use the **concept DOI** below. It always resolves to the newest version, which is what a
+reader following the citation should land on. If you need the exact state you analysed, take
+the version DOI of that release from the Zenodo record instead.
+
 ### APA Format
 ```
-KE-WP Mapping Community. (2025). Key Event to WikiPathways Mapping Dataset. 
-KE-WP Mapping Platform. https://doi.org/[DOI-when-available]
+Martens, M. Molecular AOP Builder — Curated KE → WikiPathways / GO / Reactome Mappings
+[Data set]. Zenodo. https://doi.org/10.5281/zenodo.20184643
 ```
 
 ### BibTeX Format
 ```bibtex
-@dataset{ke_wp_mappings_2025,
-    author = {KE-WP Mapping Community},
-    title = {Key Event to WikiPathways Mapping Dataset},
-    publisher = {KE-WP Mapping Platform},
-    year = {2025},
-    version = {1.0.0},
-    url = {https://ke-wp-mapping.org}
+@dataset{martens_molaop_mappings,
+    author    = {Martens, Marvin},
+    title     = {Molecular AOP Builder — Curated KE → WikiPathways / GO / Reactome Mappings},
+    publisher = {Zenodo},
+    doi       = {10.5281/zenodo.20184643},
+    url       = {https://doi.org/10.5281/zenodo.20184643}
 }
 ```
 
-### DataCite Metadata
-Full DataCite metadata available at: `/dataset/datacite`
+Year and version are deliberately absent: the concept DOI spans every release, so pinning
+either here would contradict the DOI beside it. Both are on the Zenodo record for the
+version you actually used, and a citation manager will fill them in from the DOI.
+
+### Machine-readable metadata
+The DOI itself is the metadata endpoint. DataCite content negotiation returns the full
+record, so no application route is needed:
+
+```bash
+curl -sL -H "Accept: application/vnd.citationstyles.csl+json" \
+  https://doi.org/10.5281/zenodo.20184643
+```
+
+> Earlier revisions of this document pointed at an in-application `/dataset/datacite` route.
+> That route is not implemented — it answers `503` — and is tracked in
+> [#160](https://github.com/marvinm2/molAOP-builder/issues/160) along with `/dataset/metadata`
+> and the `/export/*` family, which are documented elsewhere but likewise not yet serving.
 
 ## Licensing
 
@@ -419,13 +451,40 @@ Full DataCite metadata available at: `/dataset/datacite`
 ### Source Data Licenses
 The Builder re-uses four external knowledge resources at runtime. Each carries its own upstream licence:
 
-<!-- TODO(license-verify): AOP-Wiki licence below is unverified; the pre-2026-05 version of this doc listed it as CC0 1.0. Confirm against the canonical AOP-Wiki terms page before next minor release and update both this list and docs/DMP.md §1 accordingly. -->
-- **AOP-Wiki**: Creative Commons Attribution 4.0 International (CC BY 4.0) *(citation pending verification)*
+- **AOP-Wiki**: Creative Commons Attribution-ShareAlike 4.0 International (**CC BY-SA 4.0**) for
+  wiki content by default, with individual AOPs able to carry **All Rights Reserved** for a
+  limited period while under development. Verified against the AOP-Wiki release notes
+  ([aopwiki.org/info_pages/3](https://aopwiki.org/info_pages/3)): Release 2.6 states "Default
+  license is now Creative Commons BY SA for all content. Authors can choose an All Rights
+  Reserved license for a limited time while the AOP is being developed", and Release 2.8
+  (2026-03-08) added automated conversion of expired ARR licences to BY-SA after a 30-day
+  grace period. The AOP-Wiki RDF Explorer states the same for the RDF rendering of that
+  content (`Data: CC-BY-SA 4.0`).
+
+  This corrects two earlier claims in this document, neither of which was right: pre-2026-05
+  revisions listed AOP-Wiki as CC0 1.0, and revisions since listed it as CC BY 4.0 with a
+  standing "pending verification" note. **ShareAlike is a copyleft term, so this is not a
+  cosmetic correction** — see the open question below.
 - **WikiPathways**: Creative Commons Zero 1.0 Universal (CC0 1.0, Public Domain)
 - **Gene Ontology** (incl. UniProt-GOA human annotations): Creative Commons Attribution 4.0 International (CC BY 4.0)
 - **Reactome**: Creative Commons Zero 1.0 Universal (CC0 1.0, Public Domain). Verified against [reactome.org/license](https://reactome.org/license) clause 1(c), "All data in the Reactome database and files derived from that data are licensed under the Creative Commons Public Domain Dedication (CC0)". The CC BY 4.0 on that page (clause 1a) covers Reactome's pathway illustrations, icon library, art and branding — none of which this project redistributes.
 
 The curated mapping dataset itself is released under CC0 (above); the upstream licences govern any direct re-distribution of unmodified source data, not the curated KE → resource mappings produced by the Builder.
+
+**Key Event titles are the one exception, and they are attributed rather than dedicated.**
+The mapping itself — that KE 1234 corresponds to WP5678 — is a pair of identifiers and a fact
+relating them, which is a defensible CC0 subject. The Turtle and GMT exports additionally
+reproduce AOP-Wiki **Key Event titles** (`rdf_exporter.py` as a `vocab:keyEventName` literal,
+`gmt_exporter.py` slugified into the GMT set name), and those are authored text carrying
+AOP-Wiki's ShareAlike term. So, precisely:
+
+- **The mappings, confidence assessments, provenance and everything derived from them: CC0 1.0.**
+- **Key Event titles: reproduced from AOP-Wiki under CC BY-SA 4.0, attributed to AOP-Wiki.**
+  The CC0 dedication does not extend to them.
+
+This costs a re-user nothing they were not already doing — anyone working with KE titles is
+citing AOP-Wiki anyway — and it avoids removing the titles, which the GMT set-naming
+convention depends on.
 
 ### Software License
 **GNU General Public License v2.0 (GPL-2.0)** — application source code and infrastructure. See [`LICENSE`](../LICENSE) at the repository root.
@@ -442,9 +501,13 @@ CC0 imposes no legal attribution requirement on the curated mapping dataset. Cit
 
 ---
 
-**Last Updated**: 2026-05-14
 **Dataset Version**: see `data/zenodo_meta.json` (`version` field) — concept DOI [10.5281/zenodo.20184643](https://doi.org/10.5281/zenodo.20184643)
-**Application Version**: v2.7.2
-**Documentation Version**: 2.7.2
+**Application Version**: whatever `/health` reports, which is `src/__init__.py::__version__`
+
+> The two version lines here used to be hand-copied numbers and both were stale: they read
+> `v2.7.2` against a deployment serving 2.8.0. A duplicated version string has no way to stay
+> right, so they now name where the number lives instead of restating it. Same for the
+> "Last Updated" date this block used to carry — `git log` for this file is accurate by
+> construction and a hand-typed date is not.
 
 For questions, issues, or contributions, please visit our GitHub repository or contact the development team through the platform interface.
