@@ -1,11 +1,120 @@
 # Changelog
 
-All notable changes to the KE-WP Mapping Application are documented in this file.
+All notable changes to the Molecular AOP Builder are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Fixed
+
+- **Every published URI moved off `ke-wp-mapping.org`, a domain that was never registered
+  (#162).** The RDF vocabulary and mapping namespaces, the JSON-LD `@id` and dataset URI, the
+  download URLs advertised inside the JSON exports, and the base URL in every documented API
+  example all pointed at a host with **no DNS record at all**. It arrived with the first
+  rdflib rewrite of the RDF exporter as an aspirational name from when this repository was
+  called `KE-WP-mapping`, and spread by being retyped into each new exporter.
+
+  Three things were wrong with it and only the first is cosmetic: it named a project that no
+  longer exists; nothing at those URIs resolved or ever could, so Turtle deposited under the
+  dataset DOI carried subject URIs dereferencing to nothing — an F1/A1 failure in a deposit
+  whose whole purpose is FAIR re-use — and the documented `curl` examples sent readers to a
+  dead host; and because the domain was unregistered, a third party could have registered it
+  and served content at this project's own published identifiers.
+
+  The replacement is not a new invention. `MAPPING_NS` now points at `/mappings/<uuid>`, an
+  existing route documented in `main.mapping_detail` as a "stable mapping detail page,
+  accessible via permanent UUID URL", so every minted URI dereferences to a real page
+  describing that mapping. All four constants live in one new module,
+  `src/exporters/namespaces.py`, following the precedent `src/exporters/licence.py` set — and
+  they are **constants rather than being derived from the request host**, because an RDF
+  identifier is global: a self-hosted instance minting its own would give every mapping a
+  second identity and joining two graphs would silently produce duplicates. A test fails the
+  build if the old domain reappears anywhere in `src/` or `examples/`.
+
+  Note the previously published deposits carry the old URIs, so the next dataset deposit will
+  use different subject URIs than earlier ones. `VOCAB_NS` still does not resolve — no
+  OWL/SHACL schema is published at `/vocab#` yet — but that is now a missing document on a
+  domain this project controls rather than a dead name on one it does not own.
+
+- **The JSON-LD export credited two organisations that do not exist.** Creator was "KE-WP
+  Mapping Community" and publisher "KE-WP Mapping Platform" — placeholders from the pre-rename
+  era, in the machine-readable representation most likely to be harvested and propagated. The
+  same two invented names also sat in the citation block of `docs/DATASET_DOCUMENTATION.md`
+  beside a `[DOI-when-available]` placeholder and a `https://ke-wp-mapping.org` URL. Both now
+  name Marvin Martens with ORCID and affiliation, publisher VHP4Safety, and the citation block
+  carries the real dataset DOI and title read from the live Zenodo record.
+
+- **The JSON-LD advertised `schema.org/DataDownload` URLs that answer 500.** `/export/jsonld`
+  and `/export/json` fail on the live host because the metadata manager is unconfigured
+  (#160), and a harvester records an advertised distribution as a real one. Replaced with the
+  four routes verified to serve: `/download`, `/exports/gmt/ke-wp`, `/exports/rdf/ke-wp` and
+  `/api/v1/mappings`.
+
+- **The JSON-LD minted mapping URIs on the integer primary key** while the RDF export used the
+  `uuid`, so the two surfaces disagreed about what a given mapping is called — and the integer
+  is a local database detail that does not survive a rebuild. Both use the `uuid` now, which
+  is also what the `/mappings/<uuid>` route takes.
+
+- **Documentation that asserted things the deployment does not do.** The README's entire
+  "Export & Data Endpoints" table listed five routes of which **none** works (`/export/<format>`
+  and `/export/formats` answer 500; `/dataset/metadata`, `/dataset/versions` and
+  `/dataset/citation` answer 503), and `examples/README.md` listed six export formats behind a
+  base URL that did not resolve either. Both now list only routes verified to serve, with the
+  unimplemented ones named as such and pointed at #160.
+
+- **The AOP-Wiki licence was stated wrongly twice, in opposite directions.** Pre-2026-05
+  revisions said CC0 1.0; later ones said CC BY 4.0 with a standing "pending verification"
+  note. It is **CC BY-SA 4.0** by default, verified against the AOP-Wiki Release 2.6 notes,
+  with individual AOPs able to carry All Rights Reserved for a limited development period.
+  Understating a copyleft term is the direction that matters, because the Turtle and GMT
+  exports reproduce AOP-Wiki **Key Event titles**. Those are now stated as reproduced under
+  CC BY-SA 4.0 with attribution to AOP-Wiki, while the mappings, assessments, provenance and
+  derived structure remain CC0 1.0 — recorded once in `src/exporters/licence.py` as
+  `ATTRIBUTED_SOURCE_NOTE` and emitted into the Zenodo deposit README. Stripping the titles
+  was the alternative and would have broken the GMT set-naming convention for no gain.
+
+- **The GMT export preview had been dead since 2026-03-05 (#224).** `PREVIEW_ALLOWLIST` named
+  five files with a hardcoded `2026-03-04` date, but a GMT cache file is named for the day it
+  was written and, since #212, for a revision fingerprint of the mapping table too — so those
+  names stopped existing the following day and could never be recreated. Each request returned
+  a valid 200 carrying `{"available": false}`, indistinguishable from a preview switched off
+  on purpose, which is why it survived. GMT previews now resolve through `_get_or_generate_gmt`,
+  the same call the download routes make, so the preview and the download cannot name
+  different files. Three of the five were reachable from the Downloads page; the `-centric`
+  pairs are mapped but not yet offered in the UI, and all six are now covered by a test so
+  adding a card cannot land on a dead pair.
+
+- **Two stale hand-copied version strings.** `docs/DATASET_DOCUMENTATION.md` claimed
+  application version `v2.7.2` against a deployment serving 2.8.0, and `docs/DMP.md` named
+  `v2.7.2` as a tag that never existed. Both now name where the number lives rather than
+  restating it, which is the only way a version in prose stays right.
+
+- **The OAuth documentation omitted the part that fails silently.** The README said the other
+  three providers "activate automatically once their `*_CLIENT_ID` / `*_CLIENT_SECRET` are
+  set". Each provider's *default* discovery URL is a sandbox or test endpoint
+  (`src/core/config.py:51-86`), so following that instruction points a deployment at a sandbox
+  identity provider: login appears to work and every identity it mints is a sandbox identity,
+  written into the provenance of the mappings those users approve, where it is
+  indistinguishable from a real one afterwards. A new Authentication section states that
+  `*_DISCOVERY_URL` must always be set alongside the credentials, and notes the two knock-on
+  effects on `ADMIN_USERS` and on curator identity in the provenance.
+
+### Removed
+
+- **`docs/molaopbuilder.json` and `docs/molaopbuilder.png`**, the local copy of the
+  VHP4Safety cloud-catalog descriptor. The authoritative copy is
+  `docs/service/molaopbuilder.json` in `VHP4Safety/cloud`, nothing in this repository reads
+  the local one, and it had already drifted into being the **worse** of the two — upstream
+  carries `deployment_docs`, `developed-by-VHP`, a populated `stage`, the container-package
+  URL and the documentation links, all of which the local copy had lost or never had, plus a
+  correct `id` (`molaopbuilder`, matching its filename) where the local said
+  `molaop-builder`. A previous round of corrections to this file is recorded further down
+  this changelog, which is the point: a duplicate with no consumer gets fixed and drifts
+  again. The one thing the local copy had that upstream lacks — a fuller description covering
+  Molecular Function, Reactome and the Zenodo DOI — goes upstream with the software DOI in a
+  single catalog PR after the release.
 
 ### Added
 
