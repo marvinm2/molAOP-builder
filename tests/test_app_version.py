@@ -104,3 +104,56 @@ def test_dockerfile_and_ci_pass_the_commit_through():
         "the image push step must pass the commit SHA as a build arg, or /health "
         "reports 'unknown' on every deployed image"
     )
+
+
+def test_citation_metadata_agrees_with_the_code_version():
+    """CITATION.cff and .zenodo.json are frozen by the tag; they cannot drift.
+
+    Zenodo reads `.zenodo.json` from the tagged commit and ignores CITATION.cff
+    entirely whenever it is present, so the two files are maintained by hand and
+    have no mechanism keeping them honest except this test. A DOI cannot be
+    re-minted to correct a version that disagreed with the code.
+
+    The JSON is also parsed rather than merely read: an invalid `.zenodo.json`
+    makes Zenodo skip the archive **silently** — no error at release time, just no
+    record — so a syntax error here is a release that quietly does not happen.
+    """
+    import json
+
+    root = os.path.join(HERE, "..")
+
+    with open(os.path.join(root, "CITATION.cff"), encoding="utf-8") as fh:
+        cff = fh.read()
+    match = re.search(r"^version:\s*['\"]?([0-9][^'\"\s]*)", cff, re.M)
+    assert match, "CITATION.cff has no version field"
+    assert match.group(1) == __version__, (
+        f"CITATION.cff says {match.group(1)}, src.__version__ says {__version__}"
+    )
+
+    with open(os.path.join(root, ".zenodo.json"), encoding="utf-8") as fh:
+        payload = json.load(fh)
+    assert payload["version"] == __version__, (
+        f".zenodo.json says {payload['version']}, src.__version__ says {__version__}"
+    )
+    # Values Zenodo validates against a controlled vocabulary. A wrong one is not
+    # rejected loudly — it surfaces only in Zenodo's Errors tab, after the tag.
+    assert payload["license"] == "gpl-2.0-only"
+    assert payload["upload_type"] == "software"
+    assert payload["creators"], "a record with no creators lists the GitHub account"
+
+    # The VHP4Safety grant, so this record joins the same funding thread as the
+    # project's other Zenodo deposits.
+    #
+    # The identifier is not the NWA-ORC award number. Searching Zenodo for
+    # "1292.19.272" returns zero hits, which reads as "NWO grants are not
+    # supported" and is wrong: OpenAIRE indexes this project under NWO grant code
+    # **36952** ("The Virtual Human Platform for Safety Assessment"), which is
+    # what the AOP-Wiki RDF deposits already use. An unresolvable grant id is a
+    # documented cause of archiving failing silently, so the human-readable
+    # NWA-ORC number stays in the description and the resolvable code goes here.
+    grant_ids = [g.get("id") for g in payload.get("grants", [])]
+    assert "10.13039/501100003246::36952" in grant_ids, (
+        "the VHP4Safety NWO grant must be declared; use funder DOI "
+        "10.13039/501100003246 (NWO) with code 36952, not the NWA-ORC number"
+    )
+    assert {c.get("identifier") for c in payload.get("communities", [])} >= {"vhp4safety"}
