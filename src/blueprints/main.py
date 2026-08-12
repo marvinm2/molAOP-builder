@@ -44,28 +44,41 @@ EXPORT_CACHE_DIR = Path("static/exports")
 # ---------------------------------------------------------------------------
 _EXPORTS_BASE = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'static', 'exports'))
 
-# NOTE (#211): the five *.gmt entries below are dead. The GMT cache names its
-# files with today's date and, since #212, a revision segment as well (see
-# _get_or_generate_gmt), so a file called KE-WP_2026-03-04_All.gmt has not
-# existed since that day and the preview silently returns
-# {"available": false}. Only the three .ttl entries, whose filenames are not
-# date-stamped, actually resolve. A literal allowlist cannot name a file whose
-# identity is the data it contains, so fixing this means resolving the current
-# export by glob rather than by constant; tracked separately.
+# Static-filename previews. The Turtle exports are the only ones whose filename
+# is a constant, so they are the only ones a literal path can name.
 PREVIEW_ALLOWLIST = {
-    # WikiPathways
-    ("wp", "gmt"):          os.path.join(_EXPORTS_BASE, "KE-WP_2026-03-04_All.gmt"),
-    ("wp", "gmt-centric"):  os.path.join(_EXPORTS_BASE, "KE-WP-CENTRIC_2026-03-04_All.gmt"),
     ("wp", "ttl"):          os.path.join(_EXPORTS_BASE, "ke-wp-mappings.ttl"),
-    # Gene Ontology
-    ("go", "gmt"):          os.path.join(_EXPORTS_BASE, "KE-GO_2026-03-04_All.gmt"),
-    ("go", "gmt-centric"):  os.path.join(_EXPORTS_BASE, "KE-GO-CENTRIC_2026-03-04_All.gmt"),
     ("go", "ttl"):          os.path.join(_EXPORTS_BASE, "ke-go-mappings.ttl"),
-    # Reactome
-    ("reactome", "gmt"):    os.path.join(_EXPORTS_BASE, "KE-REACTOME_2026-03-04_All.gmt"),
     ("reactome", "ttl"):    os.path.join(_EXPORTS_BASE, "ke-reactome-mappings.ttl"),
     # CSV/JSON previews are not file-cached; preview is intentionally unavailable.
     # Add ("wp","csv") etc. here once a static export file exists.
+}
+
+# GMT previews resolve to a mapping-type token, never to a path (#224).
+#
+# These used to be literal paths carrying a hardcoded 2026-03-04 date. A GMT
+# cache file is named for the day it was written and, since #212, for a
+# revision fingerprint of the mapping table as well, so those five names stopped
+# existing on 2026-03-05 and could never be recreated: every request returned a
+# valid 200 carrying {"available": false}, which looks exactly like a preview
+# that is switched off on purpose. The three .ttl entries above kept working, so
+# the Downloads page showed previews for Turtle and blanks for GMT, and read as
+# a design decision rather than as a defect.
+#
+# A literal allowlist cannot name a file whose identity is the data it contains.
+# The token is resolved through _get_or_generate_gmt — the same call the
+# download routes make — so the preview and the download cannot name different
+# files, and the preview shows the current mapping state rather than whatever
+# happened to be cached. The security property the allowlist exists for is
+# unchanged: the URL parameters remain dict keys only, and the path still comes
+# from safe_join inside that function.
+PREVIEW_GMT_TYPES = {
+    ("wp", "gmt"):              "wp",
+    ("wp", "gmt-centric"):      "wp-centric",
+    ("go", "gmt"):              "go",
+    ("go", "gmt-centric"):      "go-centric",
+    ("reactome", "gmt"):        "reactome",
+    ("reactome", "gmt-centric"): "reactome-centric",
 }
 
 # Precomputed OECD development-status map — gitignored, lives on Gluster mount.
@@ -657,15 +670,39 @@ def api_aop_oecd_status():
 
 @main_bp.route("/api/preview/<resource>/<format_name>")
 def download_preview(resource, format_name):
-    """Return the first ≤20 lines of a cached export file for in-page preview.
+    """Return the first ≤20 lines of the current export file for in-page preview.
 
-    Security: the file path is looked up exclusively from PREVIEW_ALLOWLIST.
-    The raw URL parameters (resource, format_name) are NEVER used to construct
-    a filesystem path — they are only dict keys.  Any (resource, format_name)
-    pair not present in the allowlist returns {"lines": [], "available": false}.
+    Security: the file path is looked up exclusively from PREVIEW_ALLOWLIST, or
+    resolved by _get_or_generate_gmt from a mapping-type token in
+    PREVIEW_GMT_TYPES. The raw URL parameters (resource, format_name) are NEVER
+    used to construct a filesystem path — they are only dict keys. Any
+    (resource, format_name) pair in neither mapping returns
+    {"lines": [], "available": false}.
+
+    Issue #224: the GMT entries used to be literal paths with a hardcoded date
+    and had been unresolvable since the day after it was written. Resolving
+    through the generator instead means the preview shows what the download
+    would give, including a regeneration when curation has moved on — the same
+    work the download route would do a moment later, and cached the same way.
     """
     import itertools
     file_path = PREVIEW_ALLOWLIST.get((resource, format_name))
+    # A static entry wins: the literal allowlist stays the primary gate, and the
+    # generator is consulted only for pairs it does not name.
+    mapping_type = (
+        None if file_path else PREVIEW_GMT_TYPES.get((resource, format_name))
+    )
+    if mapping_type is not None:
+        try:
+            cache_path, _ = _get_or_generate_gmt(mapping_type)
+            file_path = str(cache_path)
+        except Exception as exc:
+            # A preview is a convenience on a page whose downloads work; it must
+            # not turn a failed export into a 500 on the Downloads page itself.
+            logger.warning(
+                "Preview generation failed for %s/%s: %s", resource, format_name, exc
+            )
+            return jsonify({"lines": [], "available": False})
     if not file_path or not os.path.exists(file_path):
         return jsonify({"lines": [], "available": False})
     try:
