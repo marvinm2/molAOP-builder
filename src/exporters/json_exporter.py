@@ -9,6 +9,7 @@ from typing import Dict, List
 logger = logging.getLogger(__name__)
 
 from src.exporters.licence import DATASET_LICENCE_SPDX, DATASET_LICENCE_URI
+from src.exporters.namespaces import BASE_URL, DATASET_URI, MAPPING_NS
 
 
 class JSONExporter:
@@ -167,19 +168,31 @@ class JSONExporter:
                     "connection": "aop:connectionType"
                 },
                 "@type": "Dataset",
-                "@id": "https://ke-wp-mapping.org/dataset",
+                "@id": DATASET_URI,
                 "name": "Key Event to WikiPathways Mapping Dataset",
                 "description": "Curated mappings between AOP Key Events and WikiPathways biological pathways with confidence assessments and connection type classifications",
                 "datePublished": datetime.now().isoformat(),
                 "version": self.metadata.metadata.get("version", "1.0.0"),
                 "license": DATASET_LICENCE_URI,
+                # "KE-WP Mapping Community" and "KE-WP Mapping Platform" were
+                # neither of them real: no such organisation exists and no such
+                # platform was ever published. They were placeholders from the
+                # pre-rename era that reached the machine-readable export most
+                # likely to be harvested, and the same two invented names also
+                # sat in the citation block of docs/DATASET_DOCUMENTATION.md.
                 "creator": {
-                    "@type": "Organization",
-                    "name": "KE-WP Mapping Community"
+                    "@type": "Person",
+                    "name": "Marvin Martens",
+                    "@id": "https://orcid.org/0000-0003-2230-0840",
+                    "affiliation": {
+                        "@type": "Organization",
+                        "name": "Department of Translational Genomics, Maastricht University"
+                    }
                 },
                 "publisher": {
-                    "@type": "Organization", 
-                    "name": "KE-WP Mapping Platform"
+                    "@type": "Organization",
+                    "name": "VHP4Safety",
+                    "url": "https://www.vhp4safety.nl"
                 },
                 "keywords": [
                     "Adverse Outcome Pathways",
@@ -192,21 +205,36 @@ class JSONExporter:
                 "temporalCoverage": self._get_temporal_coverage(),
                 "size": f"{len(mappings)} mapping records",
                 "encodingFormat": ["application/ld+json", "application/json"],
+                # Only routes that actually serve are advertised. The three this
+                # block used to list were on the unregistered domain, and two of
+                # them (/export/jsonld, /export/json) answer 500 even on the
+                # live host because the metadata manager is unconfigured (#160)
+                # — a schema.org DataDownload pointing at a 500 is worse than an
+                # absent one, since a harvester records it as a real
+                # distribution of this dataset.
                 "distribution": [
                     {
                         "@type": "DataDownload",
-                        "encodingFormat": "application/ld+json",
-                        "contentUrl": "https://ke-wp-mapping.org/export/jsonld"
-                    },
-                    {
-                        "@type": "DataDownload", 
-                        "encodingFormat": "application/json",
-                        "contentUrl": "https://ke-wp-mapping.org/export/json"
+                        "encodingFormat": "text/csv",
+                        "contentUrl": f"{BASE_URL}/download"
                     },
                     {
                         "@type": "DataDownload",
-                        "encodingFormat": "text/csv", 
-                        "contentUrl": "https://ke-wp-mapping.org/download"
+                        "encodingFormat": "text/tab-separated-values",
+                        "name": "KE-WikiPathways gene sets (GMT)",
+                        "contentUrl": f"{BASE_URL}/exports/gmt/ke-wp"
+                    },
+                    {
+                        "@type": "DataDownload",
+                        "encodingFormat": "text/turtle",
+                        "name": "KE-WikiPathways mappings with curation provenance (RDF)",
+                        "contentUrl": f"{BASE_URL}/exports/rdf/ke-wp"
+                    },
+                    {
+                        "@type": "DataDownload",
+                        "encodingFormat": "application/json",
+                        "name": "Approved mappings via the public REST API",
+                        "contentUrl": f"{BASE_URL}/api/v1/mappings"
                     }
                 ],
                 "hasPart": []
@@ -214,10 +242,18 @@ class JSONExporter:
             
             # Add individual mappings as structured data
             for mapping in mappings:
+                # Prefer the uuid: it is the identifier the /mappings/<uuid>
+                # route and the RDF export both use, so all three surfaces name
+                # a mapping the same way and the URI dereferences. The integer
+                # primary key is a local database detail and is not stable
+                # across a rebuild — minting public URIs on it was how the
+                # JSON-LD ended up disagreeing with the Turtle about what a
+                # given mapping is called.
+                mapping_key = mapping.get("uuid") or mapping["id"]
                 mapping_ld = {
                     "@type": "mapping",
-                    "@id": f"https://ke-wp-mapping.org/mapping/{mapping['id']}",
-                    "identifier": str(mapping["id"]),
+                    "@id": f"{MAPPING_NS}{mapping_key}",
+                    "identifier": str(mapping_key),
                     "keyEvent": {
                         "@type": "ke",
                         "@id": f"https://aopwiki.org/events/{mapping['ke_id'].replace('KE ', '')}",

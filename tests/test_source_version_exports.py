@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from src.exporters.namespaces import VOCAB_NS
 from src.core.models import (
     Database,
     GoMappingModel,
@@ -180,8 +181,10 @@ def test_turtle_round_trip_with_rdflib(db):
     g = Graph().parse(data=ttl, format="turtle")
     # Look for the two new predicates by IRI.
     from rdflib import URIRef
-    wp_release = URIRef("https://ke-wp-mapping.org/vocab#wpReleaseDate")
-    aop_snap = URIRef("https://ke-wp-mapping.org/vocab#aopWikiSnapshotDate")
+    # Built from the shared constant rather than a literal, so the namespace
+    # cannot drift back to a domain nobody owns without this test moving too.
+    wp_release = URIRef(f"{VOCAB_NS}wpReleaseDate")
+    aop_snap = URIRef(f"{VOCAB_NS}aopWikiSnapshotDate")
     assert any(p == wp_release for _, p, _ in g)
     assert any(p == aop_snap for _, p, _ in g)
 
@@ -228,3 +231,33 @@ def test_json_export_includes_version_fields_in_data_schema(db, monkeypatch):
     row = payload["mappings"][0]
     assert row["wp_release_date"] == "2026-05-10"
     assert row["aopwiki_snapshot_date"] == "2026-05-06"
+
+
+def test_no_export_mints_uris_on_the_unregistered_domain():
+    """Issue #162 — ke-wp-mapping.org has no DNS record and is not ours.
+
+    Every exporter used to mint URIs against it: the RDF vocabulary and mapping
+    namespaces, the JSON-LD @id and dataset URI, and the download URLs advertised
+    inside the JSON exports. Nothing at those URIs ever resolved, they named the
+    project by a name it no longer has, and because the domain is unregistered a
+    third party could have served content at this project's own identifiers.
+
+    This guards the source tree rather than one namespace constant, because the
+    original spread by being retyped in each new exporter.
+    """
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+    offenders = []
+    for path in list((root / "src").rglob("*.py")) + list((root / "examples").rglob("*")):
+        if not path.is_file() or path.suffix not in {".py", ".md", ".html"}:
+            continue
+        # The scheme-qualified form, so prose explaining why the domain was
+        # abandoned (namespaces.py, and the comment in rdf_exporter.py) does not
+        # trip the guard that exists because of it.
+        if "https://ke-wp-mapping.org" in path.read_text(encoding="utf-8", errors="replace"):
+            offenders.append(str(path.relative_to(root)))
+    assert not offenders, (
+        f"unregistered domain reintroduced in: {offenders}. Use the constants in "
+        f"src/exporters/namespaces.py."
+    )

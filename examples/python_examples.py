@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 class KEWPDatasetClient:
     """Client for accessing KE-WP Mapping Dataset API"""
     
-    def __init__(self, base_url: str = "https://ke-wp-mapping.org"):
+    def __init__(self, base_url: str = "https://molaop-builder.vhp4safety.nl"):
         self.base_url = base_url.rstrip('/')
         self.session = requests.Session()
     

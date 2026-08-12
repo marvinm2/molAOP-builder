@@ -13,11 +13,15 @@ from src.exporters.confidence import (
     filter_by_exact_confidence,
     filter_by_min_confidence,
 )
+from src.exporters.namespaces import MAPPING_NS, VOCAB_NS
 
 logger = logging.getLogger(__name__)
 
-VOCAB = Namespace("https://ke-wp-mapping.org/vocab#")
-MAPPING = Namespace("https://ke-wp-mapping.org/mapping/")
+# Both namespaces are defined once in src/exporters/namespaces.py — see that
+# module for why they moved off the unregistered ke-wp-mapping.org domain and
+# why they are constants rather than being derived from the request host.
+VOCAB = Namespace(VOCAB_NS)
+MAPPING = Namespace(MAPPING_NS)
 
 
 
