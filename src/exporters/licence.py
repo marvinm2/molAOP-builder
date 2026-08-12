@@ -42,3 +42,24 @@ DATASET_LICENCE_URI = "https://creativecommons.org/publicdomain/zero/1.0/"
 # Zenodo's own vocabulary for the same licence. Zenodo will not accept an SPDX
 # identifier or a URL here.
 DATASET_LICENCE_ZENODO = "cc-zero"
+
+# --- The one carve-out from CC0 ---------------------------------------------
+#
+# AOP-Wiki content is CC BY-SA 4.0 by default (verified against the Release 2.6
+# notes at https://aopwiki.org/info_pages/3; individual AOPs may sit under All
+# Rights Reserved for a limited development period). Earlier revisions of the
+# documentation described AOP-Wiki as CC0, then as CC BY 4.0 — neither was
+# right, and understating a copyleft term is the direction that matters.
+#
+# The mapping itself is a pair of identifiers and a fact relating them, which is
+# a defensible CC0 subject. But the Turtle and GMT exports also carry AOP-Wiki
+# **Key Event titles** — authored text — so those travel under BY-SA with
+# attribution rather than under the CC0 dedication. The alternative was to strip
+# titles and emit bare identifiers, which the GMT set-naming convention depends
+# on and which would cost re-users more than an attribution line does.
+ATTRIBUTED_SOURCE_NOTE = (
+    "Key Event titles are reproduced from AOP-Wiki (https://aopwiki.org/) under "
+    "CC BY-SA 4.0. All other content — the mappings, confidence assessments, "
+    "provenance and everything derived from them — is dedicated to the public "
+    "domain under CC0 1.0."
+)
