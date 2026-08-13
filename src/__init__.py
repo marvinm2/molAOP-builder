@@ -7,7 +7,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # 2.8.0 — nothing connected the two, so nothing caught the drift.
 # tests/test_app_version.py pins this to the newest released heading in
 # CHANGELOG.md, which is where a release is actually declared.
-__version__ = "2.8.0"
+__version__ = "2.9.0"
 
 
 def get_build_ref() -> str:
