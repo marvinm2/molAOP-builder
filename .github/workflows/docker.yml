@@ -73,7 +73,7 @@ jobs:
 
     - name: Build Docker image
       id: build
-      uses: docker/build-push-action@v5
+      uses: docker/build-push-action@v7
       with:
         context: .
         platforms: ${{ matrix.platform }}
@@ -134,7 +134,7 @@ jobs:
       # even once the tag trigger existed the build would have run and pushed
       # nothing.
       if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref_type == 'tag')
-      uses: docker/build-push-action@v5
+      uses: docker/build-push-action@v7
       with:
         context: .
         platforms: ${{ matrix.platform }}
@@ -234,7 +234,7 @@ jobs:
       uses: docker/setup-buildx-action@v3
 
     - name: Build image for scanning
-      uses: docker/build-push-action@v5
+      uses: docker/build-push-action@v7
       with:
         context: .
         load: true
@@ -345,7 +345,7 @@ jobs:
       uses: docker/setup-buildx-action@v3
 
     - name: Build image for analysis
-      uses: docker/build-push-action@v5
+      uses: docker/build-push-action@v7
       with:
         context: .
         load: true
