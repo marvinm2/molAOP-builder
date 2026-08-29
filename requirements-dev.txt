@@ -4,7 +4,7 @@
 
 # Code Quality & Linting (compatible versions for our Flask setup)
 flake8==6.0.0
-black==26.3.1
+black==26.5.1
 isort==5.12.0
 mypy==1.5.1
 pylint==2.17.7
