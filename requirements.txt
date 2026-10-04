@@ -16,5 +16,5 @@ rdflib==6.3.2
 transformers==4.53.0
 sentence-transformers==3.4.1
 torch==2.8.0+cpu
-numpy==1.26.4
+numpy==2.5.1
 tqdm==4.67.3
