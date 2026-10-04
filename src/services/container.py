@@ -397,6 +397,8 @@ class ServiceContainer:
                 config=scoring_config,
                 embedding_service=self.embedding_service,
                 ke_override_model=self.ke_override_model,
+                # Lazy, as for Reactome: only read when a description is needed.
+                ke_metadata_index=lambda: self.ke_metadata_index,
             )
             logger.debug("PathwaySuggestionService instance created with config")
         return self._pathway_suggestion_service

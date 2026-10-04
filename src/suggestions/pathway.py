@@ -30,6 +30,7 @@ class PathwaySuggestionService:
         config=None,
         embedding_service=None,
         ke_override_model=None,
+        ke_metadata_index=None,
         wikipathways_annotations_path: str = 'data/wikipathways_gene_annotations.json',
         wikipathways_gene_counts_path: str = 'data/wikipathways_gene_counts.json',
     ):
@@ -37,6 +38,10 @@ class PathwaySuggestionService:
         self.config = config or ConfigLoader.get_default_config()
         self.embedding_service = embedding_service
         self.ke_override_model = ke_override_model
+        # KE metadata keyed by KElabel, used to resolve the Key Event
+        # description server-side (#280). A dict or a zero-argument callable,
+        # as for ReactomeSuggestionService, so the container's index stays lazy.
+        self._ke_metadata_index = ke_metadata_index
         self.aop_wiki_endpoint = "https://aopwiki.rdf.bigcat-bioinformatics.org/sparql"
         self.wikipathways_endpoint = "https://sparql.wikipathways.org/sparql"
 
@@ -84,9 +89,10 @@ class PathwaySuggestionService:
             # Get embedding-based suggestions
             embedding_suggestions = []
             if self.embedding_service:
-                ke_description = ""  # Fetch from AOP-Wiki if available in future
+                # The description is resolved from KE metadata inside, once
+                # the description toggle is known — see resolve_ke_description.
                 embedding_suggestions = self._get_embedding_based_suggestions(
-                    ke_id, ke_title, ke_description, bio_level, limit
+                    ke_id, ke_title, "", bio_level, limit
                 )
                 logger.info("Found %d embedding-based suggestions", len(embedding_suggestions))
 
@@ -188,6 +194,36 @@ class PathwaySuggestionService:
             return len(genes)
         counts = getattr(self, 'wikipathways_gene_counts', None) or {}
         return counts.get(pathway_id)
+
+    def _lookup_ke_description(self, ke_id: str) -> str:
+        """Look up a Key Event's description in the precomputed KE metadata index."""
+        # getattr, as in _gene_count_for: tests build the service via __new__.
+        index = getattr(self, '_ke_metadata_index', None)
+        if callable(index):
+            try:
+                index = index()
+            except Exception as e:  # pragma: no cover - defensive
+                logger.warning("KE metadata index unavailable: %s", e)
+                return ''
+        if not index:
+            return ''
+        record = index.get(ke_id) or {}
+        return (record.get('KEdescription') or '').strip()
+
+    def resolve_ke_description(self, ke_id: str, ke_description: str) -> str:
+        """Return the Key Event description, falling back to KE metadata.
+
+        The suggester used to pass an empty description, so the description
+        reached the model only through the precomputed title+description KE
+        vector. A Key Event missing from that artifact — the newest ones, after
+        a metadata refresh (#225) — was then encoded from its title alone while
+        the description toggle reported "on" (#280). A supplied description
+        wins, so scores computed from one are unchanged.
+        """
+        description = (ke_description or '').strip()
+        if description:
+            return ke_description
+        return self._lookup_ke_description(ke_id)
 
     def _get_genes_from_ke(self, ke_id: str) -> List[Dict[str, str]]:
         """Extract gene identifier triples ({ncbi, hgnc, symbol}) for a Key Event."""
@@ -634,6 +670,12 @@ class PathwaySuggestionService:
             use_desc = resolve_description_usage(ke_id, global_toggle, disabled_kes)
             logger.debug("KE description toggle: global=%s, ke_disabled=%s, use_desc=%s",
                          global_toggle, ke_id in disabled_kes, use_desc)
+
+            # Only when the description is wanted: on a title-only cache miss the
+            # embedding service encodes title + description text, so resolving
+            # it here would leak a description the toggle switched off.
+            if use_desc:
+                ke_description = self.resolve_ke_description(ke_id, ke_description)
 
             # Rank only the pathways the gene-set-size filter admits (#238).
             # The filter used to be baked into pathway_metadata.json, which made
