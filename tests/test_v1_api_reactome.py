@@ -401,3 +401,27 @@ class TestGetReactomeMapping:
         resp = client.get("/api/v1/reactome-mappings/nonexistent")
         assert resp.status_code == 404
         assert "Reactome mapping not found" in resp.get_json()["error"]
+
+
+class TestReactomeCsvFullExport:
+    """#291: a CSV export without paging params returns every matching row."""
+
+    def test_csv_returns_every_row(self, v1r_client):
+        client, rm = v1r_client
+        n = 205  # above the per_page clamp of 200
+        _seed_reactome(rm, [
+            {
+                "uuid": f"rx-{i}", "ke_id": f"KE {i}", "ke_title": f"KE {i}",
+                "reactome_id": f"R-HSA-{i}", "pathway_name": f"pathway {i}",
+                "confidence_level": "High",
+            }
+            for i in range(n)
+        ])
+
+        resp = client.get("/api/v1/reactome-mappings?format=csv")
+        lines = resp.get_data(as_text=True).splitlines()
+        assert len(lines) == n + 1  # header + every row
+
+        payload = client.get("/api/v1/reactome-mappings").get_json()
+        assert len(payload["data"]) == 50
+        assert payload["pagination"]["total"] == n

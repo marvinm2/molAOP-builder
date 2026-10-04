@@ -26,6 +26,12 @@ curl "https://molaop-builder.vhp4safety.nl/api/v1/mappings?format=csv" -o mappin
     <li><code>format</code> - Response format: <code>json</code> (default) or <code>csv</code></li>
 </ul>
 
+<p><strong>CSV is a full export.</strong> A CSV request without <code>page</code> or
+<code>per_page</code> returns every mapping that matches the filters, in one file. Pass
+either parameter to page CSV the same way as JSON. Every CSV response carries an
+<code>X-Total-Count</code> header with the size of the whole filtered collection, so a
+paged file can be told apart from a complete one.</p>
+
 <p><strong>Response shape:</strong> results are returned under <code>data</code>, with a
 <code>pagination</code> block carrying <code>page</code>, <code>per_page</code>,
 <code>total</code>, <code>total_pages</code> and ready-made <code>next</code> /

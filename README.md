@@ -361,6 +361,11 @@ Unauthenticated, 100 requests/hour/IP. This is the contract the
 > to retrieve a full result set — a single request silently returns a partial one
 > (this is what broke the Explore table in
 > [#242](https://github.com/marvinm2/molAOP-builder/issues/242)).
+>
+> CSV is the exception: `?format=csv` (or `Accept: text/csv`) with neither `page` nor
+> `per_page` returns every matching row in one file
+> ([#291](https://github.com/marvinm2/molAOP-builder/issues/291)). Passing either keeps
+> CSV paged; the `X-Total-Count` header always gives the full filtered count.
 
 ### Admin Endpoints
 

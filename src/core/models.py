@@ -2027,7 +2027,7 @@ class MappingModel(MappingCountsMixin):
     def get_mappings_paginated(
         self,
         page: int = 1,
-        per_page: int = 50,
+        per_page: Optional[int] = 50,
         ke_id: str = None,
         pathway_id: str = None,
         confidence_level: str = None,
@@ -2068,7 +2068,11 @@ class MappingModel(MappingCountsMixin):
             params.extend(ke_ids)
 
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        offset = (page - 1) * per_page
+        # per_page=None returns every matching row (SQLite: LIMIT -1 = no limit)
+        if per_page is None:
+            limit, offset = -1, 0
+        else:
+            limit, offset = per_page, (page - 1) * per_page
 
         conn = self.db.get_connection()
         try:
@@ -2086,7 +2090,7 @@ class MappingModel(MappingCountsMixin):
                     FROM mappings {where}
                     ORDER BY created_at DESC
                     LIMIT ? OFFSET ?""",
-                params + [per_page, offset],
+                params + [limit, offset],
             ).fetchall()
             return [dict(r) for r in rows], total
         finally:
@@ -3511,7 +3515,7 @@ class GoMappingModel(MappingCountsMixin):
     def get_go_mappings_paginated(
         self,
         page: int = 1,
-        per_page: int = 50,
+        per_page: Optional[int] = 50,
         ke_id: str = None,
         go_term_id: str = None,
         confidence_level: str = None,
@@ -3548,7 +3552,11 @@ class GoMappingModel(MappingCountsMixin):
             params.append(direction)
 
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        offset = (page - 1) * per_page
+        # per_page=None returns every matching row (SQLite: LIMIT -1 = no limit)
+        if per_page is None:
+            limit, offset = -1, 0
+        else:
+            limit, offset = per_page, (page - 1) * per_page
 
         conn = self.db.get_connection()
         try:
@@ -3561,7 +3569,7 @@ class GoMappingModel(MappingCountsMixin):
                     FROM ke_go_mappings {where}
                     ORDER BY created_at DESC
                     LIMIT ? OFFSET ?""",
-                params + [per_page, offset],
+                params + [limit, offset],
             ).fetchall()
             return [dict(r) for r in rows], total
         finally:
@@ -4635,7 +4643,7 @@ class ReactomeMappingModel(MappingCountsMixin):
     def get_reactome_mappings_paginated(
         self,
         page: int = 1,
-        per_page: int = 50,
+        per_page: Optional[int] = 50,
         ke_id: str = None,
         reactome_id: str = None,
         confidence_level: str = None,
@@ -4684,7 +4692,11 @@ class ReactomeMappingModel(MappingCountsMixin):
             params.append(confidence_level)
 
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
-        offset = (page - 1) * per_page
+        # per_page=None returns every matching row (SQLite: LIMIT -1 = no limit)
+        if per_page is None:
+            limit, offset = -1, 0
+        else:
+            limit, offset = per_page, (page - 1) * per_page
 
         conn = self.db.get_connection()
         try:
@@ -4702,7 +4714,7 @@ class ReactomeMappingModel(MappingCountsMixin):
                     FROM ke_reactome_mappings {where}
                     ORDER BY created_at DESC
                     LIMIT ? OFFSET ?""",
-                params + [per_page, offset],
+                params + [limit, offset],
             ).fetchall()
             return [dict(r) for r in rows], total
         finally:

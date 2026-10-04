@@ -623,3 +623,150 @@ def test_aops_empty_when_membership_snapshot_missing(v1_client):
         assert resp.get_json()["data"] == []
     finally:
         v1_mod.ke_aop_membership = original
+
+
+# ---------------------------------------------------------------------------
+# Full-collection CSV export (#291)
+# ---------------------------------------------------------------------------
+
+# More rows than the per_page clamp (200), so no single paged request can
+# return them all — the shape of the production table that exposed #291.
+_BULK_N = 205
+
+
+def _bulk_seed(db, table, rows):
+    """Insert approved rows straight into a mapping table, in one transaction."""
+    cols = list(rows[0])
+    conn = db.get_connection()
+    try:
+        conn.executemany(
+            f"INSERT INTO {table} ({','.join(cols)}) "
+            f"VALUES ({','.join('?' * len(cols))})",
+            [[r[c] for c in cols] for r in rows],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _bulk_wp_rows(n, confidence="High", prefix="B"):
+    return [
+        {
+            "uuid": f"wp-{prefix}-{i}", "ke_id": f"KE {prefix}{i}",
+            "ke_title": f"KE {prefix}{i}", "wp_id": f"WP{prefix}{i}",
+            "wp_title": f"Pathway {prefix}{i}", "confidence_level": confidence,
+            "approved_by_curator": "test_curator",
+        }
+        for i in range(n)
+    ]
+
+
+def _csv_data_rows(response):
+    import csv as _csv
+    import io as _io
+
+    rows = list(_csv.reader(_io.StringIO(response.get_data(as_text=True))))
+    return rows[1:]
+
+
+class TestCsvFullExport:
+    def test_mappings_csv_returns_every_row(self, v1_client):
+        """?format=csv without page/per_page exports the whole collection."""
+        client, mm, gm = v1_client
+        _bulk_seed(mm.db, "mappings", _bulk_wp_rows(_BULK_N))
+
+        resp = client.get("/api/v1/mappings?format=csv")
+        assert resp.status_code == 200
+        rows = _csv_data_rows(resp)
+        assert len(rows) == _BULK_N
+        assert len({r[0] for r in rows}) == _BULK_N  # distinct uuids
+        assert resp.headers["X-Total-Count"] == str(_BULK_N)
+
+    def test_mappings_csv_accept_header_returns_every_row(self, v1_client):
+        """Content negotiation gets the same full export as ?format=csv."""
+        client, mm, gm = v1_client
+        _bulk_seed(mm.db, "mappings", _bulk_wp_rows(_BULK_N))
+
+        resp = client.get("/api/v1/mappings", headers={"Accept": "text/csv"})
+        assert len(_csv_data_rows(resp)) == _BULK_N
+
+    def test_mappings_csv_still_applies_filters(self, v1_client):
+        """Pagination is bypassed for a full export; filters are not."""
+        client, mm, gm = v1_client
+        _bulk_seed(mm.db, "mappings", _bulk_wp_rows(_BULK_N))
+        _bulk_seed(mm.db, "mappings", _bulk_wp_rows(3, confidence="Low", prefix="L"))
+
+        resp = client.get("/api/v1/mappings?format=csv&confidence_level=Low")
+        rows = _csv_data_rows(resp)
+        assert len(rows) == 3
+        assert resp.headers["X-Total-Count"] == "3"
+
+    def test_mappings_csv_explicit_paging_is_kept(self, v1_client):
+        """An explicit page or per_page keeps CSV paged, with the total exposed."""
+        client, mm, gm = v1_client
+        _bulk_seed(mm.db, "mappings", _bulk_wp_rows(_BULK_N))
+
+        resp = client.get("/api/v1/mappings?format=csv&per_page=10")
+        assert len(_csv_data_rows(resp)) == 10
+        assert resp.headers["X-Total-Count"] == str(_BULK_N)
+
+        resp = client.get("/api/v1/mappings?format=csv&page=5")
+        assert len(_csv_data_rows(resp)) == _BULK_N - 4 * 50
+
+    def test_mappings_json_pagination_unchanged(self, v1_client):
+        """JSON keeps its default page and exact envelope (the Analyser pages it)."""
+        client, mm, gm = v1_client
+        _bulk_seed(mm.db, "mappings", _bulk_wp_rows(_BULK_N))
+
+        resp = client.get("/api/v1/mappings")
+        payload = resp.get_json()
+        assert set(payload) == {"data", "pagination"}
+        assert len(payload["data"]) == 50
+        assert payload["pagination"] == {
+            "page": 1,
+            "per_page": 50,
+            "total": _BULK_N,
+            "total_pages": 5,
+            "next": "http://localhost/api/v1/mappings?page=2&per_page=50",
+            "prev": None,
+        }
+        assert "X-Total-Count" not in resp.headers
+
+        payload = client.get("/api/v1/mappings?per_page=200").get_json()
+        assert len(payload["data"]) == 200
+        assert payload["pagination"]["total_pages"] == 2
+
+    def test_go_mappings_csv_returns_every_row(self, v1_client):
+        client, mm, gm = v1_client
+        _bulk_seed(gm.db, "ke_go_mappings", [
+            {
+                "uuid": f"go-{i}", "ke_id": f"KE {i}", "ke_title": f"KE {i}",
+                "go_id": f"GO:{i:07d}", "go_name": f"process {i}",
+                "confidence_level": "High",
+            }
+            for i in range(_BULK_N)
+        ])
+
+        resp = client.get("/api/v1/go-mappings?format=csv")
+        assert len(_csv_data_rows(resp)) == _BULK_N
+
+        payload = client.get("/api/v1/go-mappings").get_json()
+        assert len(payload["data"]) == 50
+        assert payload["pagination"]["total"] == _BULK_N
+
+    def test_aops_csv_returns_every_row(self, v1_client, monkeypatch):
+        client, mm, gm = v1_client
+        monkeypatch.setattr(v1_mod, "ke_aop_membership", {
+            f"KE {i}": [{"aop_id": f"AOP {i}", "aop_title": f"AOP title {i}"}]
+            for i in range(_BULK_N)
+        })
+
+        resp = client.get("/api/v1/aops?format=csv")
+        assert len(_csv_data_rows(resp)) == _BULK_N
+
+        resp = client.get("/api/v1/aops?format=csv&per_page=7")
+        assert len(_csv_data_rows(resp)) == 7
+
+        payload = client.get("/api/v1/aops").get_json()
+        assert len(payload["data"]) == 50
+        assert payload["pagination"]["total"] == _BULK_N

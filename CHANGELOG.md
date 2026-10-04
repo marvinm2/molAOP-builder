@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   embedding scores shift and earlier cached or stamped suggestion scores for them will differ.
   Key Events with a precomputed vector score exactly as before, and the global and per-KE
   description toggles still keep a switched-off description out of the encoder.
+- **The "full database" CSV exports returned one page (#291).** `?format=csv` on
+  `/api/v1/mappings`, `/go-mappings`, `/reactome-mappings` and `/aops` wrote only the current
+  page — 50 rows by default, and never more than the 200-row `per_page` clamp — as a normal
+  200 with nothing to say it was partial. The `/downloads` and stats-page buttons link that URL,
+  so the advertised full export held 50 of 451 WikiPathways mappings. A CSV request that sets
+  neither `page` nor `per_page` now returns every row matching the filters; setting either
+  keeps CSV paged. CSV responses now carry `X-Total-Count`. JSON responses are unchanged.
 
 ## [2.9.0] - 2026-08-13
 

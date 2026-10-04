@@ -69,8 +69,26 @@ def add_cors_headers(response):
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _wants_csv():
+    """True when the caller asked for CSV, by ?format=csv or Accept: text/csv."""
+    if request.args.get("format", "").lower() == "csv":
+        return True
+    best = request.accept_mimetypes.best_match(
+        ["application/json", "text/csv"], default="application/json"
+    )
+    return best == "text/csv"
+
+
 def _parse_pagination_params():
-    """Parse and clamp ?page= and ?per_page= from request.args."""
+    """Parse and clamp ?page= and ?per_page= from request.args.
+
+    A CSV request that names neither page nor per_page is a full export
+    (#291): it returns (1, None), and per_page=None means "every matching
+    row". JSON, and CSV with explicit paging, keep the clamped page.
+    """
+    if (_wants_csv() and "page" not in request.args
+            and "per_page" not in request.args):
+        return 1, None
     try:
         page = max(1, int(request.args.get("page", 1)))
     except (ValueError, TypeError):
@@ -302,18 +320,11 @@ def _respond_collection(serialized_rows, pagination, csv_fields):
     """
     Return JSON or CSV based on Accept header or ?format=csv query param.
     JSON: {"data": [...], "pagination": {...}}
-    CSV:  header row + data rows (provenance flattened)
+    CSV:  header row + data rows (provenance flattened), with the size of the
+          whole filtered collection in X-Total-Count so a paged CSV can be
+          told apart from a complete one.
     """
-    format_param = request.args.get("format", "").lower()
-    if format_param == "csv":
-        use_csv = True
-    else:
-        best = request.accept_mimetypes.best_match(
-            ["application/json", "text/csv"], default="application/json"
-        )
-        use_csv = best == "text/csv"
-
-    if use_csv:
+    if _wants_csv():
         flat_rows = [_flatten_for_csv(r) for r in serialized_rows]
         output = io.StringIO()
         writer = csv.DictWriter(
@@ -325,6 +336,7 @@ def _respond_collection(serialized_rows, pagination, csv_fields):
         response = make_response(output.getvalue())
         response.headers["Content-Type"] = "text/csv; charset=utf-8"
         response.headers["Content-Disposition"] = "attachment; filename=ke_wp_mappings.csv"
+        response.headers["X-Total-Count"] = str(pagination["total"])
         return response
     return jsonify({"data": serialized_rows, "pagination": pagination})
 
@@ -420,7 +432,8 @@ def list_mappings():
       confidence_level — filter by confidence level (High/Medium/Low, case-insensitive)
       aop_id           — filter to KEs belonging to this AOP (numeric or "AOP N")
       page             — page number (default 1)
-      per_page         — results per page (default 50, max 200)
+      per_page         — results per page (default 50, max 200); a CSV request
+                         without page/per_page returns every matching row
 
     Accept header:
       application/json (default) — returns {"data": [...], "pagination": {...}}
@@ -510,7 +523,8 @@ def list_go_mappings():
       confidence_level — filter by confidence level (High/Medium/Low, case-insensitive)
       direction        — filter by GO direction: "positive" or "negative"
       page             — page number (default 1)
-      per_page         — results per page (default 50, max 200)
+      per_page         — results per page (default 50, max 200); a CSV request
+                         without page/per_page returns every matching row
 
     Accept header:
       application/json (default) — returns {"data": [...], "pagination": {...}}
@@ -595,7 +609,8 @@ def list_reactome_mappings():
       confidence_level — filter by confidence level (High/Medium/Low, case-insensitive)
       aop_id           — filter to KEs belonging to this AOP (numeric or "AOP N")
       page             — page number (default 1)
-      per_page         — results per page (default 50, max 200)
+      per_page         — results per page (default 50, max 200); a CSV request
+                         without page/per_page returns every matching row
       format           — "csv" to force CSV; default returns JSON
 
     Accept header:
@@ -776,7 +791,8 @@ def list_aops():
       mapped_only — "true" to return only AOPs with at least one mapped KE
       q           — case-insensitive substring filter over aop_id and aop_title
       page        — page number (default 1)
-      per_page    — results per page (default 50, max 200)
+      per_page    — results per page (default 50, max 200); a CSV request
+                    without page/per_page returns every matching row
 
     Accept header / ?format=csv behaves as for /mappings.
 
@@ -804,8 +820,11 @@ def list_aops():
         ]
 
     total = len(aops)
-    start = (page - 1) * per_page
-    window = aops[start:start + per_page]
+    if per_page is None:  # full CSV export
+        window = aops
+    else:
+        start = (page - 1) * per_page
+        window = aops[start:start + per_page]
 
     base_url = request.url_root.rstrip("/") + "/api/v1/aops"
     extra_params = {}

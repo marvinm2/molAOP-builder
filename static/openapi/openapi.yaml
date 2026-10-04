@@ -15,6 +15,11 @@ info:
     collection endpoints also support CSV output via `?format=csv` or the
     `Accept: text/csv` request header.
 
+    A CSV request that sets neither `page` nor `per_page` is a full export:
+    it returns every row matching the filters, unpaginated. Setting either
+    parameter keeps CSV paged like JSON. Every CSV response carries an
+    `X-Total-Count` header with the size of the whole filtered collection.
+
 servers:
   - url: /api/v1
     description: "Current stable API (v1)"
@@ -73,7 +78,7 @@ paths:
             minimum: 1
             maximum: 200
             default: 50
-          description: "Results per page (max 200)"
+          description: "Results per page (max 200). Omit both page and per_page on a CSV request to export every matching row."
         - name: format
           in: query
           required: false
@@ -175,7 +180,7 @@ paths:
             minimum: 1
             maximum: 200
             default: 50
-          description: "Results per page (max 200)"
+          description: "Results per page (max 200). Omit both page and per_page on a CSV request to export every matching row."
         - name: format
           in: query
           required: false
@@ -283,7 +288,7 @@ paths:
             minimum: 1
             maximum: 200
             default: 50
-          description: "Results per page (max 200)"
+          description: "Results per page (max 200). Omit both page and per_page on a CSV request to export every matching row."
         - name: format
           in: query
           required: false
@@ -392,7 +397,7 @@ paths:
             minimum: 1
             maximum: 200
             default: 50
-          description: "Results per page (max 200)"
+          description: "Results per page (max 200). Omit both page and per_page on a CSV request to export every matching row."
         - name: format
           in: query
           required: false
