@@ -23,7 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   200 with nothing to say it was partial. The `/downloads` and stats-page buttons link that URL,
   so the advertised full export held 50 of 451 WikiPathways mappings. A CSV request that sets
   neither `page` nor `per_page` now returns every row matching the filters; setting either
-  keeps CSV paged. CSV responses now carry `X-Total-Count`. JSON responses are unchanged.
+  keeps CSV paged. CSV responses now carry `X-Total-Count`, exposed to cross-origin browser
+  code, and each endpoint names its own download (`ke_go_mappings.csv`,
+  `ke_reactome_mappings.csv`, `aops.csv`) instead of all four saving as `ke_wp_mappings.csv`.
+  JSON responses are unchanged.
 
 ## [2.9.0] - 2026-08-13
 

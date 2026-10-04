@@ -770,3 +770,82 @@ class TestCsvFullExport:
         payload = client.get("/api/v1/aops").get_json()
         assert len(payload["data"]) == 50
         assert payload["pagination"]["total"] == _BULK_N
+
+
+def _bulk_go_rows(n):
+    """GO rows whose direction alternates positive / negative."""
+    return [
+        {
+            "uuid": f"go-{i}", "ke_id": f"KE {i}", "ke_title": f"KE {i}",
+            "go_id": f"GO:{i:07d}", "go_name": f"process {i}",
+            "confidence_level": "High",
+            "go_direction": "positive" if i % 2 == 0 else "negative",
+        }
+        for i in range(n)
+    ]
+
+
+def _bulk_aop_membership(n):
+    return {
+        f"KE {i}": [{"aop_id": f"AOP {i}", "aop_title": f"AOP title {i}"}]
+        for i in range(n)
+    }
+
+
+class TestCsvFullExportAcrossEndpoints:
+    """#291 review: pin the JSON envelope and the CSV filters on every endpoint."""
+
+    @pytest.mark.parametrize("path, filename", [
+        ("/api/v1/mappings", "ke_wp_mappings.csv"),
+        ("/api/v1/go-mappings", "ke_go_mappings.csv"),
+        ("/api/v1/aops", "aops.csv"),
+    ])
+    def test_json_envelope_unchanged_and_csv_named(
+        self, v1_client, monkeypatch, path, filename
+    ):
+        client, mm, gm = v1_client
+        _bulk_seed(mm.db, "mappings", _bulk_wp_rows(_BULK_N))
+        _bulk_seed(gm.db, "ke_go_mappings", _bulk_go_rows(_BULK_N))
+        monkeypatch.setattr(v1_mod, "ke_aop_membership", _bulk_aop_membership(_BULK_N))
+
+        resp = client.get(path)
+        payload = resp.get_json()
+        assert set(payload) == {"data", "pagination"}
+        assert len(payload["data"]) == 50
+        assert payload["pagination"] == {
+            "page": 1,
+            "per_page": 50,
+            "total": _BULK_N,
+            "total_pages": 5,
+            "next": f"http://localhost{path}?page=2&per_page=50",
+            "prev": None,
+        }
+        assert "X-Total-Count" not in resp.headers
+        assert "Access-Control-Expose-Headers" not in resp.headers
+
+        resp = client.get(f"{path}?format=csv")
+        assert len(_csv_data_rows(resp)) == _BULK_N
+        assert resp.headers["Content-Disposition"] == f"attachment; filename={filename}"
+        assert resp.headers["Access-Control-Expose-Headers"] == "X-Total-Count"
+
+    def test_go_csv_full_export_applies_direction(self, v1_client):
+        client, mm, gm = v1_client
+        _bulk_seed(gm.db, "ke_go_mappings", _bulk_go_rows(_BULK_N))
+        expected = (_BULK_N + 1) // 2  # even indices are positive
+
+        resp = client.get("/api/v1/go-mappings?format=csv&direction=positive")
+        assert len(_csv_data_rows(resp)) == expected
+        assert resp.headers["X-Total-Count"] == str(expected)
+
+        resp = client.get("/api/v1/go-mappings?format=csv&per_page=10&page=2")
+        assert len(_csv_data_rows(resp)) == 10
+        assert resp.headers["X-Total-Count"] == str(_BULK_N)
+
+    def test_aops_csv_full_export_applies_q(self, v1_client, monkeypatch):
+        client, mm, gm = v1_client
+        monkeypatch.setattr(v1_mod, "ke_aop_membership", _bulk_aop_membership(_BULK_N))
+        expected = sum(1 for i in range(_BULK_N) if "aop 20" in f"aop {i}")
+
+        resp = client.get("/api/v1/aops?format=csv&q=AOP%2020")
+        assert len(_csv_data_rows(resp)) == expected
+        assert resp.headers["X-Total-Count"] == str(expected)

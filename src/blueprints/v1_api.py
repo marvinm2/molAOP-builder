@@ -316,13 +316,15 @@ def _serialize_reactome_mapping(row):
     }
 
 
-def _respond_collection(serialized_rows, pagination, csv_fields):
+def _respond_collection(serialized_rows, pagination, csv_fields, csv_filename):
     """
     Return JSON or CSV based on Accept header or ?format=csv query param.
     JSON: {"data": [...], "pagination": {...}}
     CSV:  header row + data rows (provenance flattened), with the size of the
           whole filtered collection in X-Total-Count so a paged CSV can be
-          told apart from a complete one.
+          told apart from a complete one. The header is listed in
+          Access-Control-Expose-Headers so cross-origin browser code can read
+          it; csv_filename names the download per endpoint.
     """
     if _wants_csv():
         flat_rows = [_flatten_for_csv(r) for r in serialized_rows]
@@ -335,8 +337,9 @@ def _respond_collection(serialized_rows, pagination, csv_fields):
         output.seek(0)
         response = make_response(output.getvalue())
         response.headers["Content-Type"] = "text/csv; charset=utf-8"
-        response.headers["Content-Disposition"] = "attachment; filename=ke_wp_mappings.csv"
+        response.headers["Content-Disposition"] = f"attachment; filename={csv_filename}"
         response.headers["X-Total-Count"] = str(pagination["total"])
+        response.headers["Access-Control-Expose-Headers"] = "X-Total-Count"
         return response
     return jsonify({"data": serialized_rows, "pagination": pagination})
 
@@ -485,7 +488,7 @@ def list_mappings():
         extra_params["aop_id"] = aop_id
     pagination = _make_pagination(page, per_page, total, base_url, extra_params)
 
-    return _respond_collection(serialized, pagination, _MAPPING_CSV_FIELDS)
+    return _respond_collection(serialized, pagination, _MAPPING_CSV_FIELDS, "ke_wp_mappings.csv")
 
 
 @v1_api_bp.route("/mappings/<uuid>", methods=["GET"])
@@ -569,7 +572,7 @@ def list_go_mappings():
         extra_params["direction"] = direction
     pagination = _make_pagination(page, per_page, total, base_url, extra_params)
 
-    return _respond_collection(serialized, pagination, _GO_MAPPING_CSV_FIELDS)
+    return _respond_collection(serialized, pagination, _GO_MAPPING_CSV_FIELDS, "ke_go_mappings.csv")
 
 
 @v1_api_bp.route("/go-mappings/<uuid>", methods=["GET"])
@@ -666,7 +669,7 @@ def list_reactome_mappings():
         extra_params["aop_id"] = aop_id
     pagination = _make_pagination(page, per_page, total, base_url, extra_params)
 
-    return _respond_collection(serialized, pagination, _REACTOME_MAPPING_CSV_FIELDS)
+    return _respond_collection(serialized, pagination, _REACTOME_MAPPING_CSV_FIELDS, "ke_reactome_mappings.csv")
 
 
 @v1_api_bp.route("/reactome-mappings/<uuid>", methods=["GET"])
@@ -834,4 +837,4 @@ def list_aops():
         extra_params["q"] = request.args.get("q")
     pagination = _make_pagination(page, per_page, total, base_url, extra_params)
 
-    return _respond_collection(window, pagination, _AOP_CSV_FIELDS)
+    return _respond_collection(window, pagination, _AOP_CSV_FIELDS, "aops.csv")

@@ -425,3 +425,38 @@ class TestReactomeCsvFullExport:
         payload = client.get("/api/v1/reactome-mappings").get_json()
         assert len(payload["data"]) == 50
         assert payload["pagination"]["total"] == n
+
+    def test_csv_full_export_filters_paging_and_envelope(self, v1r_client):
+        client, rm = v1r_client
+        n = 205
+        _seed_reactome(rm, [
+            {
+                "uuid": f"rx-{i}", "ke_id": f"KE {i}", "ke_title": f"KE {i}",
+                "reactome_id": f"R-HSA-{i}", "pathway_name": f"pathway {i}",
+                "confidence_level": "High" if i % 5 else "Low",
+            }
+            for i in range(n)
+        ])
+        low = sum(1 for i in range(n) if i % 5 == 0)
+
+        resp = client.get("/api/v1/reactome-mappings?format=csv&confidence_level=low")
+        assert len(resp.get_data(as_text=True).splitlines()) == low + 1
+        assert resp.headers["X-Total-Count"] == str(low)
+        assert resp.headers["Content-Disposition"] == (
+            "attachment; filename=ke_reactome_mappings.csv"
+        )
+        assert resp.headers["Access-Control-Expose-Headers"] == "X-Total-Count"
+
+        resp = client.get("/api/v1/reactome-mappings?format=csv&page=3")
+        assert len(resp.get_data(as_text=True).splitlines()) == 50 + 1
+
+        resp = client.get("/api/v1/reactome-mappings")
+        assert resp.get_json()["pagination"] == {
+            "page": 1,
+            "per_page": 50,
+            "total": n,
+            "total_pages": 5,
+            "next": "http://localhost/api/v1/reactome-mappings?page=2&per_page=50",
+            "prev": None,
+        }
+        assert "X-Total-Count" not in resp.headers
