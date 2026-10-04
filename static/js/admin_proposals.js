@@ -615,13 +615,21 @@ var AdminProposals = (function () {
     function _renderPanel(proposal) {
         var isPending = (proposal.status === 'pending');
 
-        // Determine pathway/GO/Reactome ID+title display
-        var pathwayId = escapeHtml(proposal.wp_id || proposal.go_id || proposal.reactome_id || proposal.pathway_id || '');
-        var pathwayTitle = escapeHtml(proposal.wp_title || proposal.go_name || proposal.pathway_name || proposal.pathway_title || '');
+        // Determine pathway/GO/Reactome ID+title display. A deletion stores no
+        // KE/pathway of its own (#289); its target is in the mapping_* fields.
+        var wpId = proposal.wp_id || proposal.mapping_wp_id;
+        var goId = proposal.go_id || proposal.mapping_go_id;
+        var reactomeId = proposal.reactome_id || proposal.mapping_reactome_id;
+        var pathwayId = escapeHtml(wpId || goId || reactomeId || proposal.pathway_id || '');
+        var pathwayTitle = escapeHtml(
+            proposal.wp_title || proposal.go_name || proposal.pathway_name ||
+            proposal.mapping_wp_title || proposal.mapping_go_name || proposal.mapping_pathway_name ||
+            proposal.pathway_title || ''
+        );
         var pathwayLabel = 'Pathway/Term';
-        if (proposal.wp_id) pathwayLabel = 'WikiPathways';
-        else if (proposal.go_id) pathwayLabel = 'GO Term';
-        else if (proposal.reactome_id) pathwayLabel = 'Reactome Pathway';
+        if (wpId) pathwayLabel = 'WikiPathways';
+        else if (goId) pathwayLabel = 'GO Term';
+        else if (reactomeId) pathwayLabel = 'Reactome Pathway';
 
         // Confidence field
         var confidence = escapeHtml(
@@ -730,7 +738,7 @@ var AdminProposals = (function () {
 
             // Mapping info
             '<div style="margin-bottom:12px;">' +
-            '<div><strong>KE:</strong> ' + escapeHtml(proposal.ke_id || '') + ' &mdash; ' + escapeHtml(proposal.ke_title || '') + '</div>' +
+            '<div><strong>KE:</strong> ' + escapeHtml(proposal.ke_id || proposal.mapping_ke_id || '') + ' &mdash; ' + escapeHtml(proposal.ke_title || proposal.mapping_ke_title || '') + '</div>' +
             '<div><strong>' + escapeHtml(pathwayLabel) + ':</strong> ' + pathwayId + ' &mdash; ' + pathwayTitle + '</div>' +
             '<div><strong>Confidence:</strong> ' + confidence + '</div>' +
             '<div><strong>Score:</strong> ' + scoreText + '</div>' +

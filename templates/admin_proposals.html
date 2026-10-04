@@ -82,10 +82,13 @@
                             {% for proposal in proposals %}
                             <tr data-proposal-id="{{ proposal.id }}"
                                 data-status="{{ proposal.status|e }}"
-                                data-ke-id="{{ proposal.ke_id|e }}"
-                                data-ke-title="{{ proposal.ke_title|e }}"
-                                data-pathway-id="{{ proposal.wp_id|e }}"
-                                data-pathway-title="{{ proposal.wp_title|e }}"
+                                data-mapping-id="{{ proposal.mapping_id if proposal.mapping_id else '' }}"
+                                data-proposed-delete="{{ 1 if proposal.proposed_delete else 0 }}"
+                                {# #289: a deletion stores no KE/pathway of its own; name the mapping it removes. #}
+                                data-ke-id="{{ (proposal.ke_id or proposal.mapping_ke_id)|e }}"
+                                data-ke-title="{{ (proposal.ke_title or proposal.mapping_ke_title)|e }}"
+                                data-pathway-id="{{ (proposal.wp_id or proposal.mapping_wp_id)|e }}"
+                                data-pathway-title="{{ (proposal.wp_title or proposal.mapping_wp_title)|e }}"
                                 data-confidence="{{ (proposal.proposed_confidence or proposal.current_confidence_level)|e }}"
                                 data-connection-type="{{ (proposal.proposed_connection_type or proposal.current_connection_type)|e }}"
                                 data-proposed-relationship="{{ proposal.proposed_relationship|e if proposal.proposed_relationship else '' }}"
@@ -112,10 +115,10 @@
                                 </td>
                                 <td>{{ proposal.id }}</td>
                                 <td>
-                                    <strong>{{ proposal.ke_id }}</strong> → <strong>{{ proposal.wp_id }}</strong><br>
+                                    <strong>{{ proposal.ke_id or proposal.mapping_ke_id }}</strong> → <strong>{{ proposal.wp_id or proposal.mapping_wp_id }}</strong><br>
                                     <div class="proposal-detail">
-                                        {{ proposal.ke_title }}<br>
-                                        → {{ proposal.wp_title }}
+                                        {{ proposal.ke_title or proposal.mapping_ke_title }}<br>
+                                        → {{ proposal.wp_title or proposal.mapping_wp_title }}
                                     </div>
                                 </td>
                                 <td>

@@ -79,10 +79,11 @@
                                 data-status="{{ proposal.status|e }}"
                                 data-mapping-id="{{ proposal.mapping_id if proposal.mapping_id else '' }}"
                                 data-proposed-delete="{{ 1 if proposal.proposed_delete else 0 }}"
-                                data-ke-id="{{ proposal.ke_id|e }}"
-                                data-ke-title="{{ proposal.ke_title|e }}"
-                                data-pathway-id="{{ proposal.reactome_id|e }}"
-                                data-pathway-title="{{ proposal.pathway_name|e }}"
+                                {# #289: a deletion may store no KE/pathway of its own; name the mapping it removes. #}
+                                data-ke-id="{{ (proposal.ke_id or proposal.mapping_ke_id)|e }}"
+                                data-ke-title="{{ (proposal.ke_title or proposal.mapping_ke_title)|e }}"
+                                data-pathway-id="{{ (proposal.reactome_id or proposal.mapping_reactome_id)|e }}"
+                                data-pathway-title="{{ (proposal.pathway_name or proposal.mapping_pathway_name)|e }}"
                                 data-confidence="{{ (proposal.new_pair_confidence_level or proposal.proposed_confidence)|e }}"
                                 data-proposed-relationship="{{ proposal.proposed_relationship|e if proposal.proposed_relationship else '' }}"
                                 data-proposed-basis="{{ proposal.proposed_basis|e if proposal.proposed_basis else '' }}"
@@ -107,10 +108,10 @@
                                 </td>
                                 <td>{{ proposal.id }}</td>
                                 <td>
-                                    <strong>{{ proposal.ke_id }}</strong> &rarr; <strong>{{ proposal.reactome_id }}</strong><br>
+                                    <strong>{{ proposal.ke_id or proposal.mapping_ke_id }}</strong> &rarr; <strong>{{ proposal.reactome_id or proposal.mapping_reactome_id }}</strong><br>
                                     <div class="proposal-detail">
-                                        {{ proposal.ke_title }}<br>
-                                        &rarr; {{ proposal.pathway_name }}
+                                        {{ proposal.ke_title or proposal.mapping_ke_title }}<br>
+                                        &rarr; {{ proposal.pathway_name or proposal.mapping_pathway_name }}
                                     </div>
                                 </td>
                                 <td>
