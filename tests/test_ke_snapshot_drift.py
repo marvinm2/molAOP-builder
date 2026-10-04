@@ -21,6 +21,7 @@ Note the issue's own hypothesis — that a non-OPTIONAL `foaf:page` in
 query and a bare `?KE a aopo:KeyEvent` count both return 1595. That predicate
 is deliberately left alone.
 """
+import logging
 import os
 import tempfile
 
@@ -32,7 +33,11 @@ from src.core.models import Database, MappingModel
 @pytest.fixture
 def container_with_snapshot(monkeypatch):
     """A service container whose KE snapshot deliberately lags the mappings."""
+    from src.services import container as container_module
     from src.services.container import ServiceContainer
+
+    # The once-per-Key-Event warning memory is process-wide; isolate tests.
+    monkeypatch.setattr(container_module, "_warned_missing_kes", set(), raising=False)
 
     fd, db_path = tempfile.mkstemp()
     db = Database(db_path)
@@ -88,6 +93,54 @@ def test_check_is_skipped_rather_than_forcing_a_corpus_load(container_with_snaps
     drift = container_with_snapshot._ke_snapshot_drift()
     assert drift["checked"] is False
     assert "reason" in drift
+
+
+def _drift_warnings(caplog):
+    return [
+        r for r in caplog.records
+        if r.name == "src.services.container"
+        and r.levelno == logging.WARNING
+        and "absent from the KE snapshot" in r.getMessage()
+    ]
+
+
+def test_missing_key_event_is_warned_about_once_per_process(
+    container_with_snapshot, caplog,
+):
+    """The drift check runs on every /health probe, so a Key Event that stays
+    missing (KE 1419 in production) was re-warned thousands of times a day and
+    made up over a third of the log. Warn once per Key Event, then only debug;
+    the returned report must not change between calls."""
+    caplog.set_level(logging.DEBUG, logger="src.services.container")
+
+    reports = [container_with_snapshot._ke_snapshot_drift() for _ in range(5)]
+
+    warnings = _drift_warnings(caplog)
+    assert len(warnings) == 1
+    assert "KE 123" in warnings[0].getMessage()
+    assert "KE 2410" in warnings[0].getMessage()
+    assert all(r == reports[0] for r in reports)
+    assert reports[-1]["missing_from_snapshot"] == ["KE 123", "KE 2410"]
+
+
+def test_newly_missing_key_event_still_gets_its_own_warning(
+    container_with_snapshot, caplog,
+):
+    """Suppression is per Key Event, not a one-shot switch: a Key Event that
+    drops out later must still be warned about."""
+    caplog.set_level(logging.DEBUG, logger="src.services.container")
+    container_with_snapshot._ke_snapshot_drift()
+
+    # KE 18 falls out of the snapshot after the first check.
+    container_with_snapshot._ke_metadata_index = {}
+    container_with_snapshot._ke_snapshot_drift()
+    container_with_snapshot._ke_snapshot_drift()
+
+    warnings = _drift_warnings(caplog)
+    assert len(warnings) == 2
+    second = warnings[1].getMessage()
+    assert "KE 18" in second
+    assert "KE 123" not in second
 
 
 def test_drift_is_reported_without_flipping_the_service_to_degraded():

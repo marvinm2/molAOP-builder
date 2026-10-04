@@ -21,6 +21,11 @@ from src.services.embedding import BiologicalEmbeddingService
 
 logger = logging.getLogger(__name__)
 
+# Key Events already warned about by _ke_snapshot_drift() in this process. The
+# check runs on every /health probe, so a Key Event that stays missing would
+# otherwise be re-warned on each one.
+_warned_missing_kes = set()
+
 # Multi-provider OAuth configuration.
 # Each entry maps a provider name to its env-var keys and OIDC discovery URL.
 # Providers are only registered when their CLIENT_ID and CLIENT_SECRET env vars are set.
@@ -726,10 +731,17 @@ class ServiceContainer:
             conn.close()
 
         missing = sorted(mapped_kes - set(index))
-        if missing:
+        newly_missing = [ke for ke in missing if ke not in _warned_missing_kes]
+        if newly_missing:
+            _warned_missing_kes.update(newly_missing)
             logger.warning(
                 "%d Key Event(s) hold mappings but are absent from the KE "
                 "snapshot and cannot be selected in the UI: %s",
+                len(newly_missing), ", ".join(newly_missing),
+            )
+        elif missing:
+            logger.debug(
+                "%d Key Event(s) still absent from the KE snapshot: %s",
                 len(missing), ", ".join(missing),
             )
         return {
