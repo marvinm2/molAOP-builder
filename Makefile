@@ -84,8 +84,8 @@ wp-corpus:	## Rebuild the WikiPathways corpus (annotations -> title embeddings -
 	python scripts/precompute_pathway_embeddings.py
 
 # Mirrors REBUILD["reactome"] in scripts/check_source_releases.py, and a test
-# keeps them equal. The order matters: the download writes
-# reactome_filtered_stids.json, which the embedding script reads.
+# keeps them equal. The order matters: the download writes the gene
+# annotations and filtered stIds that the embedding script needs as input.
 reactome-corpus:	## Rebuild the Reactome corpus (annotations + filtered stIds -> name/description embeddings). Same commands as the weekly cron
 	python scripts/download_reactome_annotations.py
 	python scripts/precompute_reactome_embeddings.py

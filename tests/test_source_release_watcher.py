@@ -220,7 +220,11 @@ def test_aopwiki_rebuild_is_the_cheap_metadata_only_path():
 
 
 def _makefile_recipe(target):
-    """The recipe lines of one Makefile target, each split into argv."""
+    """The recipe lines of one Makefile target, each split into argv.
+
+    A leading `@` or `-` is make syntax, not part of the command, so it is
+    stripped. Make variables and backslash continuations are not expanded:
+    keep the recipe literal argv so it can be compared with REBUILD."""
     makefile = os.path.join(watcher.PROJECT_ROOT, "Makefile")
     with open(makefile, "r", encoding="utf-8") as fh:
         lines = fh.read().splitlines()
@@ -232,14 +236,14 @@ def _makefile_recipe(target):
     for line in lines[start + 1 :]:
         if not line.startswith("\t"):
             break
-        recipe.append(line.strip().split())
+        recipe.append(line.strip().lstrip("@-").split())
     return recipe
 
 
 def test_reactome_corpus_target_runs_what_the_cron_runs():
     """#225: the cron could rebuild Reactome but there was no by-hand entry
-    point. The order matters — the download writes reactome_filtered_stids.json,
-    which the embedding script reads — so the two paths must not drift apart,
+    point. The order matters — the download writes the gene annotations and
+    filtered stIds the embedding script needs — so the two paths must not drift apart,
     the way `make go-corpus` and the cron once did (#284)."""
     expected = watcher.REBUILD["reactome"]["commands"]
     assert _makefile_recipe("reactome-corpus") == expected

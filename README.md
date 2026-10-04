@@ -240,9 +240,12 @@ All workflows run automatically on push to main branch and can be triggered manu
    rebuilding anything; `make reactome-corpus` runs the same commands the weekly cron does
    for a Reactome release.
 
-   The KE embeddings are **two** artifacts, one per ranking channel, and both must exist:
+   The KE embeddings are **two** artifacts, one per ranking channel, and both should exist:
    `data/ke_embeddings_title_only.npz` (used where a Key Event is compared with name-only
    text, such as the Reactome name channel) and `data/ke_embeddings_with_desc.npz` (title + description).
+   Neither is fatal when missing: without the title-only file those vectors are encoded live
+   and the service reports itself degraded; without the with-description file it falls back
+   to `data/ke_embeddings.npz`.
    `data/ke_embeddings.npz` is a backward-compatible copy of the with-description set, so
    its presence alone says nothing about the title-only channel. `make ke-corpus` writes all
    three from the existing `data/ke_metadata.json` and leaves that snapshot untouched;
