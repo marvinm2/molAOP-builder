@@ -120,6 +120,13 @@ def test_missing_key_event_is_warned_about_once_per_process(
     assert "KE 123" in warnings[0].getMessage()
     assert "KE 2410" in warnings[0].getMessage()
     assert all(r == reports[0] for r in reports)
+    debug = [
+        r for r in caplog.records
+        if r.name == "src.services.container"
+        and r.levelno == logging.DEBUG
+        and "still absent from the KE snapshot" in r.getMessage()
+    ]
+    assert len(debug) == 4
     assert reports[-1]["missing_from_snapshot"] == ["KE 123", "KE 2410"]
 
 
@@ -140,6 +147,30 @@ def test_newly_missing_key_event_still_gets_its_own_warning(
     assert len(warnings) == 2
     second = warnings[1].getMessage()
     assert "KE 18" in second
+    assert "KE 123" not in second
+    assert "KE 2410" not in second
+
+
+def test_key_event_that_returns_and_drops_out_again_is_rewarned(
+    container_with_snapshot, caplog,
+):
+    """A Key Event that reappears in the snapshot is forgotten, so a later
+    drop-out gets a fresh WARNING instead of only a DEBUG line."""
+    caplog.set_level(logging.DEBUG, logger="src.services.container")
+    original = container_with_snapshot._ke_metadata_index
+    container_with_snapshot._ke_snapshot_drift()
+
+    # KE 2410 comes back (e.g. after a snapshot refresh) ...
+    container_with_snapshot._ke_metadata_index = {**original, "KE 2410": {}}
+    container_with_snapshot._ke_snapshot_drift()
+    # ... and later drops out again.
+    container_with_snapshot._ke_metadata_index = original
+    container_with_snapshot._ke_snapshot_drift()
+
+    warnings = _drift_warnings(caplog)
+    assert len(warnings) == 2
+    second = warnings[1].getMessage()
+    assert "KE 2410" in second
     assert "KE 123" not in second
 
 

@@ -23,7 +23,10 @@ logger = logging.getLogger(__name__)
 
 # Key Events already warned about by _ke_snapshot_drift() in this process. The
 # check runs on every /health probe, so a Key Event that stays missing would
-# otherwise be re-warned on each one.
+# otherwise be re-warned on each one. Key Events that reappear in the snapshot
+# are forgotten, so one that drops out again is warned about afresh. "Process"
+# means one gunicorn worker lifetime: workers recycle after max_requests, so
+# expect the warning again after each recycle rather than literally once.
 _warned_missing_kes = set()
 
 # Multi-provider OAuth configuration.
@@ -731,6 +734,7 @@ class ServiceContainer:
             conn.close()
 
         missing = sorted(mapped_kes - set(index))
+        _warned_missing_kes.intersection_update(missing)
         newly_missing = [ke for ke in missing if ke not in _warned_missing_kes]
         if newly_missing:
             _warned_missing_kes.update(newly_missing)
