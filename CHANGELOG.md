@@ -27,6 +27,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   code, and each endpoint names its own download (`ke_go_mappings.csv`,
   `ke_reactome_mappings.csv`, `aops.csv`) instead of all four saving as `ke_wp_mappings.csv`.
   JSON responses are unchanged.
+### Added
+
+- **`make reactome-corpus` (#225).** Reactome was the one corpus with no by-hand rebuild
+  target: the weekly cron could rebuild it through `REBUILD["reactome"]` in
+  `scripts/check_source_releases.py`, but a person had to already know the two scripts and
+  their order. The target runs the same two commands, and a test fails if the Makefile and
+  the cron's command list drift apart, the way `make go-corpus` and the cron once did (#284).
+  The README now also names the split KE embedding artifacts
+  (`ke_embeddings_title_only.npz`, `ke_embeddings_with_desc.npz`) and lists what
+  `make ke-corpus` and `make reactome-corpus` write.
 
 ## [2.9.0] - 2026-08-13
 

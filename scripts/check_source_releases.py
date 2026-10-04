@@ -113,6 +113,8 @@ REBUILD = {
         ],
     },
     "reactome": {
+        # `make reactome-corpus` runs these same commands by hand, and a test
+        # keeps the two equal.
         "commands": [
             ["python", "scripts/download_reactome_annotations.py"],
             ["python", "scripts/precompute_reactome_embeddings.py"],

@@ -231,14 +231,25 @@ All workflows run automatically on push to main branch and can be triggered manu
    make wp-corpus     # WikiPathways corpus
    make go-corpus     # GO Biological Process corpus
    make mf-corpus     # GO Molecular Function corpus
+   make reactome-corpus  # Reactome corpus (annotations, then embeddings)
    ```
 
    Each `*-corpus` target runs BioBERT over the upstream release and takes appreciable time
    and memory; `make ke-metadata` does not and is enough to populate the Key Event dropdown.
-   Reactome has no Makefile target yet ([#225](https://github.com/marvinm2/molAOP-builder/issues/225)) —
-   run `scripts/download_reactome_annotations.py` then
-   `scripts/precompute_reactome_embeddings.py`, in that order. `make check-releases` reports
-   which corpora are behind their upstream source without rebuilding anything.
+   `make check-releases` reports which corpora are behind their upstream source without
+   rebuilding anything; `make reactome-corpus` runs the same commands the weekly cron does
+   for a Reactome release.
+
+   The KE embeddings are **two** artifacts, one per ranking channel, and both must exist:
+   `data/ke_embeddings_title_only.npz` (used where a Key Event is compared with name-only
+   text, such as the Reactome name channel) and `data/ke_embeddings_with_desc.npz` (title + description).
+   `data/ke_embeddings.npz` is a backward-compatible copy of the with-description set, so
+   its presence alone says nothing about the title-only channel. `make ke-corpus` writes all
+   three from the existing `data/ke_metadata.json` and leaves that snapshot untouched;
+   `make ke-corpus-refresh` also re-fetches it from AOP-Wiki. `make reactome-corpus` writes
+   `data/reactome_gene_annotations.json`, `data/reactome_filtered_stids.json`,
+   `data/reactome_pathway_metadata.json` and the two Reactome embedding sets
+   (`reactome_pathway_embeddings.npz`, `reactome_pathway_name_embeddings.npz`).
 
 7. **Launch the application:**
    ```bash

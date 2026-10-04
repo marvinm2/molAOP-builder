@@ -1,4 +1,4 @@
-.PHONY: help install test lint run docker-build docker-run clean capture-versions backfill-versions go-hierarchy go-corpus mf-corpus wp-corpus wp-annotations ke-corpus ke-corpus-refresh ke-metadata check-releases refresh-stale-corpora
+.PHONY: help install test lint run docker-build docker-run clean capture-versions backfill-versions go-hierarchy go-corpus mf-corpus wp-corpus wp-annotations reactome-corpus ke-corpus ke-corpus-refresh ke-metadata check-releases refresh-stale-corpora
 
 # NEITHER GO namespace has a size ceiling, on purpose. Decided 2026-08-04.
 #
@@ -82,6 +82,13 @@ wp-corpus:	## Rebuild the WikiPathways corpus (annotations -> title embeddings -
 	python scripts/download_wikipathways_annotations.py
 	python scripts/precompute_pathway_title_embeddings.py
 	python scripts/precompute_pathway_embeddings.py
+
+# Mirrors REBUILD["reactome"] in scripts/check_source_releases.py, and a test
+# keeps them equal. The order matters: the download writes
+# reactome_filtered_stids.json, which the embedding script reads.
+reactome-corpus:	## Rebuild the Reactome corpus (annotations + filtered stIds -> name/description embeddings). Same commands as the weekly cron
+	python scripts/download_reactome_annotations.py
+	python scripts/precompute_reactome_embeddings.py
 
 ke-corpus:	## Rebuild the KE embeddings (title-only + with-description) from the existing ke_metadata.json snapshot
 	python scripts/precompute_ke_embeddings.py
