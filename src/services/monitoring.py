@@ -9,13 +9,22 @@ import time
 from collections import defaultdict, deque
 from typing import Any, Dict
 
-from flask import request
+from flask import current_app, request
 
 logger = logging.getLogger(__name__)
 
+# Rows older than this are dropped when the table is initialised and, at most
+# once a day, on store — the metrics feed a last-hour / last-24h view only.
+METRICS_RETENTION_SECONDS = 30 * 86400
+_PURGE_INTERVAL_SECONDS = 86400
+
+# A store failure is usually persistent (unwritable path), so it is reported
+# at WARNING once per process and at DEBUG after that, not once per request.
+_store_failure_warned = False
+
 
 class MetricsCollector:
-    def __init__(self, db_path: str = "ke_wp_mapping.db"):
+    def __init__(self, db_path: str):
         self.db_path = db_path
         self.memory_metrics = defaultdict(
             lambda: {
@@ -24,7 +33,16 @@ class MetricsCollector:
                 "errors": deque(maxlen=1000),
             }
         )
+        self._last_purge = 0
         self.init_metrics_table()
+
+    def _purge_old_metrics(self, conn):
+        """Delete metric rows past the retention window"""
+        conn.execute(
+            "DELETE FROM metrics WHERE timestamp < ?",
+            (int(time.time()) - METRICS_RETENTION_SECONDS,),
+        )
+        self._last_purge = time.time()
 
     def init_metrics_table(self):
         """Initialize metrics table in database"""
@@ -74,6 +92,8 @@ class MetricsCollector:
             """
             )
 
+            self._purge_old_metrics(conn)
+
             conn.commit()
             conn.close()
             logger.info("Metrics tables initialized")
@@ -86,11 +106,9 @@ class MetricsCollector:
         method: str,
         status_code: int,
         response_time: float,
-        client_ip: str = None,
-        user_agent: str = None,
         error_message: str = None,
     ):
-        """Record a request metric"""
+        """Record a request metric (client IP and user agent are not stored)"""
         timestamp = int(time.time())
 
         # Store in memory for quick access
@@ -120,8 +138,6 @@ class MetricsCollector:
                 method,
                 status_code,
                 response_time,
-                client_ip,
-                user_agent,
                 error_message,
             ),
         ).start()
@@ -133,18 +149,17 @@ class MetricsCollector:
         method: str,
         status_code: int,
         response_time: float,
-        client_ip: str,
-        user_agent: str,
         error_message: str,
     ):
         """Store metric in database asynchronously"""
+        global _store_failure_warned
         try:
             conn = sqlite3.connect(self.db_path)
             conn.execute(
                 """
                 INSERT INTO metrics (timestamp, endpoint, method, status_code, 
                                    response_time, client_ip, user_agent, error_message)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, NULL, NULL, ?)
             """,
                 (
                     timestamp,
@@ -152,15 +167,19 @@ class MetricsCollector:
                     method,
                     status_code,
                     response_time,
-                    client_ip,
-                    user_agent,
                     error_message,
                 ),
             )
+            if time.time() - self._last_purge > _PURGE_INTERVAL_SECONDS:
+                self._purge_old_metrics(conn)
             conn.commit()
             conn.close()
         except Exception as e:
-            logger.error("Failed to store metric: %s", e)
+            if _store_failure_warned:
+                logger.debug("Failed to store metric: %s", e)
+            else:
+                _store_failure_warned = True
+                logger.warning("Failed to store metric: %s", e)
 
     def get_endpoint_stats(self, endpoint: str, hours: int = 24) -> Dict[str, Any]:
         """Get statistics for a specific endpoint"""
@@ -264,8 +283,26 @@ class MetricsCollector:
             return {"error": "Failed to fetch system health"}
 
 
-# Global metrics collector instance
-metrics_collector = MetricsCollector()
+def _app_metrics_collector():
+    """Return the app's configured collector, or None outside an app"""
+    try:
+        return current_app.service_container.metrics_collector
+    except (RuntimeError, AttributeError) as e:
+        logger.debug("No metrics collector available: %s", e)
+        return None
+
+
+def _record(status_code, response_time, error_message=None):
+    collector = _app_metrics_collector()
+    if collector is None:
+        return
+    collector.record_request(
+        endpoint=request.endpoint or "unknown",
+        method=request.method,
+        status_code=status_code,
+        response_time=response_time,
+        error_message=error_message,
+    )
 
 
 def monitor_performance(f):
@@ -284,38 +321,11 @@ def monitor_performance(f):
             else:
                 status_code = 200
 
-            response_time = time.time() - start_time
-
-            # Record the metric
-            metrics_collector.record_request(
-                endpoint=request.endpoint or "unknown",
-                method=request.method,
-                status_code=status_code,
-                response_time=response_time,
-                client_ip=request.environ.get(
-                    "HTTP_X_FORWARDED_FOR", request.environ.get("REMOTE_ADDR")
-                ),
-                user_agent=request.headers.get("User-Agent", ""),
-            )
-
+            _record(status_code, time.time() - start_time)
             return response
 
         except Exception as e:
-            response_time = time.time() - start_time
-
-            # Record the error
-            metrics_collector.record_request(
-                endpoint=request.endpoint or "unknown",
-                method=request.method,
-                status_code=500,
-                response_time=response_time,
-                client_ip=request.environ.get(
-                    "HTTP_X_FORWARDED_FOR", request.environ.get("REMOTE_ADDR")
-                ),
-                user_agent=request.headers.get("User-Agent", ""),
-                error_message=str(e),
-            )
-
+            _record(500, time.time() - start_time, error_message=str(e))
             raise
 
     return decorated_function
