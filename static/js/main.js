@@ -1073,19 +1073,7 @@ class KEWPApp {
         const pwDescription = selectedPW.data('description') || '';
         const biolevel = selectedKE.data('biolevel') || '';
         
-        // Get user information from body attributes or session
-        const isLoggedIn = $("body").data("is-logged-in") === true;
-        let userInfo = 'Anonymous';
-        if (isLoggedIn) {
-            // Try to get username from the welcome message in the header
-            const welcomeText = $('header nav p').text();
-            const usernameMatch = welcomeText.match(/Welcome,\s*([^(]+)/);
-            if (usernameMatch) {
-                userInfo = `GitHub: ${usernameMatch[1].trim()}`;
-            } else {
-                userInfo = 'GitHub user (logged in)';
-            }
-        }
+        const userInfo = this.getSubmitterLabel();
         const currentDate = new Date().toLocaleString();
         
         // Create collapsible descriptions
@@ -1162,19 +1150,7 @@ class KEWPApp {
         const pwDescription = selectedPW.data('description') || '';
         const biolevel = selectedKE.data('biolevel') || '';
         
-        // Get user information from body attributes or session
-        const isLoggedIn = $("body").data("is-logged-in") === true;
-        let userInfo = 'Anonymous';
-        if (isLoggedIn) {
-            // Try to get username from the welcome message in the header
-            const welcomeText = $('header nav p').text();
-            const usernameMatch = welcomeText.match(/Welcome,\s*([^(]+)/);
-            if (usernameMatch) {
-                userInfo = `GitHub: ${usernameMatch[1].trim()}`;
-            } else {
-                userInfo = 'GitHub user (logged in)';
-            }
-        }
+        const userInfo = this.getSubmitterLabel();
         const currentDate = new Date().toLocaleString();
         
         // Create collapsible descriptions
@@ -3321,6 +3297,16 @@ This helps identify gaps in existing pathways for future development.">❓</span
         }
     }
 
+    /**
+     * "Submitted by" label for the preview modals: the provider-prefixed
+     * identity (github:…, orcid:…, guest:…) the server renders on
+     * <body data-username>, i.e. what the proposal will be attributed to.
+     */
+    getSubmitterLabel() {
+        const username = $("body").attr("data-username");
+        return username ? this.escapeHtml(username) : 'Anonymous';
+    }
+
     escapeHtml(text) {
         if (!text) return '';
         return text
@@ -4661,12 +4647,7 @@ This helps identify gaps in existing pathways for future development.">❓</span
         const $entries = $('#go-existing-entries');
         const bioLevel = $('#ke_id option:selected').data('biolevel') || 'Not specified';
 
-        let userInfo = 'Anonymous';
-        if (this.isLoggedIn) {
-            const welcomeText = $('header nav p').text();
-            const usernameMatch = welcomeText.match(/Welcome,\s*([^(]+)/);
-            if (usernameMatch) userInfo = `GitHub: ${usernameMatch[1].trim()}`;
-        }
+        const userInfo = this.getSubmitterLabel();
 
         const previewHtml = `
             <div class="existing-entries-container" style="margin-top: 15px;">

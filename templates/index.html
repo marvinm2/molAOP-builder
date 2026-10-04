@@ -21,7 +21,8 @@
     <!-- CSRF Token for AJAX requests -->
     <meta name="csrf-token" content="{{ csrf_token() }}">
 </head>
-<body data-is-logged-in="{{ 'true' if session.get('user') else 'false' }}">
+<body data-is-logged-in="{{ 'true' if session.get('user') else 'false' }}"
+      {%- if session.get('user') %} data-username="{{ session['user']['username'] }}"{% endif %}>
 <div class="page-container">
     {% include 'components/navigation.html' %}
     <div class="container">
