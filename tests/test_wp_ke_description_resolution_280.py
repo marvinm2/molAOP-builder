@@ -110,6 +110,19 @@ class TestDescriptionReachesTheEmbeddingCall:
         assert emb.calls[0]['use_description'] is False
         assert emb.calls[0]['ke_description'] == ''
 
+    def test_global_toggle_off_does_not_resolve(self):
+        """With the description switched off globally, a cache-miss encode
+        must stay title-only even though metadata has a description."""
+        emb = _RecordingEmbeddingService()
+        svc = _make_svc(emb, ke_metadata_index=_metadata_index())
+        matching = svc.config.pathway_suggestion.embedding_based_matching
+        matching.use_ke_description = False
+
+        svc.get_pathway_suggestions(KE_ID, KE_TITLE, limit=5)
+
+        assert emb.calls[0]['use_description'] is False
+        assert emb.calls[0]['ke_description'] == ''
+
     @pytest.mark.parametrize('index', [None, {}, _metadata_index()])
     def test_missing_description_yields_empty_string(self, index):
         emb = _RecordingEmbeddingService()
@@ -156,6 +169,35 @@ class TestCacheMissEncodesTheDescription:
         assert any(KE_DESC in text for text in embedding_service.encoded), (
             f"description never reached the encoder: {embedding_service.encoded!r}"
         )
+
+    def test_cache_hit_scores_unchanged(self, embedding_service):
+        """A KE with a precomputed title+description vector scores the same
+        with or without the metadata lookup, and the description never
+        reaches the encoder."""
+        embedding_service.ke_embeddings_with_desc = {
+            KE_ID: np.array([0.6, 0.8, 0.0])
+        }
+
+        def run(index):
+            embedding_service.encoded = []
+            svc = _make_svc(embedding_service, ke_metadata_index=index)
+            results = svc.get_pathway_suggestions(KE_ID, KE_TITLE, limit=5)
+            assert not any(KE_DESC in t for t in embedding_service.encoded)
+            return results
+
+        with_lookup = run(_metadata_index())
+        without_lookup = run(None)
+
+        def sims(results):
+            return [
+                (r['pathwayID'], r['embedding_similarity'],
+                 r['title_similarity'], r['description_similarity'],
+                 r['confidence_score'])
+                for r in results['embedding_based_suggestions']
+            ]
+
+        assert sims(with_lookup), "no embedding suggestions were produced"
+        assert sims(with_lookup) == sims(without_lookup)
 
 
 class TestWiring:

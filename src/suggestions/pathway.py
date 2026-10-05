@@ -218,7 +218,14 @@ class PathwaySuggestionService:
         vector. A Key Event missing from that artifact — the newest ones, after
         a metadata refresh (#225) — was then encoded from its title alone while
         the description toggle reported "on" (#280). A supplied description
-        wins, so scores computed from one are unchanged.
+        wins and passes through untouched.
+
+        get_pathway_suggestions never supplies one, so in practice the
+        description always comes from metadata; the pass-through is reachable
+        only by calling _get_embedding_based_suggestions directly. Scores for a
+        KE already in the precomputed title+description vectors do not move
+        either way: get_ke_embedding_for_matching returns that vector before the
+        fallback text is encoded. Only cache-miss KEs change.
         """
         description = (ke_description or '').strip()
         if description:

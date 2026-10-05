@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **WikiPathways suggestions dropped the Key Event description on a cache miss (#280).**
+  The suggester passed an empty description, so a Key Event missing from the precomputed
+  title+description KE vectors was encoded from its title alone while the description toggle
+  reported "on". The description is now looked up in the KE metadata. This is a deliberate
+  scoring-input change, limited to Key Events absent from `ke_embeddings_with_desc`: their
+  embedding scores shift and earlier cached or stamped suggestion scores for them will differ.
+  Key Events with a precomputed vector score exactly as before, and the global and per-KE
+  description toggles still keep a switched-off description out of the encoder.
+
 ## [2.9.0] - 2026-08-13
 
 ### Fixed
