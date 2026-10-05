@@ -152,7 +152,12 @@ def test_reactome_deletion_proposal_names_its_target(admin_app):
 
 
 def test_review_panel_falls_back_to_mapping_fields():
-    """The detail-endpoint path of the shared panel must read mapping_* too."""
+    """The panel reads mapping_* as well, defensively.
+
+    In practice the row path covers #289: every queue now fills data-ke-id
+    from mapping_ke_id, so the detail-endpoint fetch is only reached when the
+    join is empty too. This is a source check, not a behavioural one.
+    """
     tests_dir = os.path.dirname(os.path.abspath(__file__))
     js_path = os.path.join(
         os.path.dirname(tests_dir), "static", "js", "admin_proposals.js"
@@ -175,3 +180,116 @@ def test_review_panel_falls_back_to_mapping_fields():
 
     assert "proposal.mapping_ke_id" in body, "KE line ignores mapping_ke_id"
     assert "proposal.mapping_ke_title" in body, "KE line ignores mapping_ke_title"
+
+
+def test_wp_change_proposal_takes_the_row_path(admin_app):
+    """A WP change proposal also stores ke_id=NULL; it now carries its target
+    and mapping id on the row (as GO and Reactome already did), so the panel
+    shows it as a change to an existing mapping, not a deletion."""
+    client, models = admin_app
+    mapping_id = models["mapping_model"].create_mapping(
+        ke_id="KE 55",
+        ke_title="Cell injury/death",
+        wp_id="WP254",
+        wp_title="Apoptosis",
+        created_by="github:curator",
+    )
+    proposal_id = models["proposal_model"].create_proposal(
+        mapping_id=mapping_id,
+        user_name="Curator",
+        user_email="curator@example.com",
+        user_affiliation="UM",
+        provider_username="github:curator",
+        proposed_confidence="medium",
+    )
+
+    html = client.get("/admin/proposals?status=pending").get_data(as_text=True)
+    row, cell = _row_html(html, proposal_id)
+
+    assert "None" not in cell
+    assert "KE 55" in cell and "WP254" in cell
+    assert _attr(row, "data-ke-id") == "KE 55"
+    assert _attr(row, "data-pathway-id") == "WP254"
+    assert _attr(row, "data-mapping-id") == str(mapping_id)
+    assert _attr(row, "data-proposed-delete") == "0"
+
+
+def test_reactome_deletion_with_partial_display_columns(admin_app):
+    """Current submissions store ke_id/reactome_id but may leave the titles
+    NULL; the titles must come from the mapping rather than print None."""
+    client, models = admin_app
+    mapping_id = models["reactome_mapping_model"].create_mapping(
+        ke_id="KE 177",
+        ke_title="Mitochondrial dysfunction",
+        reactome_id="R-HSA-5357801",
+        pathway_name="Programmed Cell Death",
+        created_by="github:curator",
+    )
+    proposal_id = models["reactome_proposal_model"].create_proposal(
+        mapping_id=mapping_id,
+        user_name="Curator",
+        user_email="curator@example.com",
+        user_affiliation="UM",
+        provider_username="github:curator",
+        proposed_delete=True,
+        ke_id="KE 177",
+        reactome_id="R-HSA-5357801",
+    )
+
+    html = client.get("/admin/reactome-proposals?status=pending").get_data(as_text=True)
+    row, cell = _row_html(html, proposal_id)
+
+    assert "None" not in cell
+    assert "Mitochondrial dysfunction" in cell
+    assert "Programmed Cell Death" in cell
+    assert _attr(row, "data-ke-title") == "Mitochondrial dysfunction"
+    assert _attr(row, "data-pathway-title") == "Programmed Cell Death"
+    assert _attr(row, "data-proposed-delete") == "1"
+
+
+@pytest.mark.parametrize("resource", ["wp", "reactome"])
+def test_approved_deletion_history_does_not_print_none(admin_app, resource):
+    """Approving a deletion hard-deletes the mapping, so the join comes back
+    empty in the history view. The row must say so rather than "None → None"."""
+    client, models = admin_app
+    if resource == "wp":
+        mapping_model = models["mapping_model"]
+        mapping_id = mapping_model.create_mapping(
+            ke_id="KE 386",
+            ke_title="Decrease of neuronal network function",
+            wp_id="WP4875",
+            wp_title="Disruption of postsynaptic signaling by CNV",
+            created_by="github:curator",
+        )
+        proposal_model = models["proposal_model"]
+        url = "/admin/proposals?status=approved"
+    else:
+        mapping_model = models["reactome_mapping_model"]
+        mapping_id = mapping_model.create_mapping(
+            ke_id="KE 177",
+            ke_title="Mitochondrial dysfunction",
+            reactome_id="R-HSA-5357801",
+            pathway_name="Programmed Cell Death",
+            created_by="github:curator",
+        )
+        proposal_model = models["reactome_proposal_model"]
+        url = "/admin/reactome-proposals?status=approved"
+
+    proposal_id = proposal_model.create_proposal(
+        mapping_id=mapping_id,
+        user_name="Curator",
+        user_email="curator@example.com",
+        user_affiliation="UM",
+        provider_username="github:curator",
+        proposed_delete=True,
+    )
+    assert proposal_model.update_proposal_status(
+        proposal_id, "approved", "github:testadmin"
+    )
+    assert mapping_model.delete_mapping(mapping_id)
+
+    html = client.get(url).get_data(as_text=True)
+    _row, cell = _row_html(html, proposal_id)
+
+    assert "None" not in cell
+    assert "Mapping #%d no longer exists" % mapping_id in cell

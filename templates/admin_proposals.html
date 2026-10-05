@@ -115,11 +115,16 @@
                                 </td>
                                 <td>{{ proposal.id }}</td>
                                 <td>
+                                    {% if proposal.ke_id or proposal.mapping_ke_id or proposal.wp_id or proposal.mapping_wp_id %}
                                     <strong>{{ proposal.ke_id or proposal.mapping_ke_id }}</strong> → <strong>{{ proposal.wp_id or proposal.mapping_wp_id }}</strong><br>
                                     <div class="proposal-detail">
                                         {{ proposal.ke_title or proposal.mapping_ke_title }}<br>
                                         → {{ proposal.wp_title or proposal.mapping_wp_title }}
                                     </div>
+                                    {% else %}
+                                    {# The target was hard-deleted (an approved deletion), so the join is empty. #}
+                                    <em class="proposal-detail">Mapping{% if proposal.mapping_id %} #{{ proposal.mapping_id }}{% endif %} no longer exists</em>
+                                    {% endif %}
                                 </td>
                                 <td>
                                     {% if proposal.proposed_delete %}
