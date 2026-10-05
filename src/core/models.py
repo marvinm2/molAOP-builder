@@ -58,11 +58,18 @@ class Database:
         self.init_db()
 
     def get_connection(self):
-        """Get database connection with WAL mode, busy timeout, and row factory."""
+        """Get database connection with rollback journal, busy timeout, and row factory.
+
+        Not WAL: in production the database is on GlusterFS, and WAL's shared-memory
+        index (the -shm file) is not safe on a network filesystem
+        (https://www.sqlite.org/wal.html). A WAL database on the same mount was
+        corrupted in 2026-08 (#292). Setting DELETE also converts a database that
+        was left in WAL mode, the first time no other connection is open.
+        """
         conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA synchronous=NORMAL;")
+        conn.execute("PRAGMA journal_mode=DELETE;")
+        conn.execute("PRAGMA synchronous=FULL;")
         conn.execute("PRAGMA busy_timeout=5000;")
         return conn
 

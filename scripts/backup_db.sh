@@ -31,9 +31,10 @@ mkdir -p "${BACKUP_DIR}"
 # something behind that sorts as the newest backup (#276).
 trap 'rm -f "${BACKUP_FILE}"' ERR
 
-# .backup uses the Online Backup API: checkpoints WAL, then copies atomically.
-# DO NOT back up just the .db file without the -wal and -shm files;
-# always use this script to get a consistent snapshot.
+# .backup uses the Online Backup API, which copies a consistent snapshot even
+# while the app is writing. Do not copy the .db file by hand instead; always use
+# this script. (The database used to run in WAL mode, where a bare copy also
+# missed the -wal/-shm files; it uses a rollback journal since #292.)
 #
 # The API is safe during active writes, but the CLI opens with no busy timeout,
 # so a concurrent writer made it fail outright ("database is locked") instead of

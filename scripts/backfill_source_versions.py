@@ -186,7 +186,7 @@ def main(argv: list[str] | None = None) -> int:
              args.db, args.manifest, " (dry-run)" if args.dry_run else "")
 
     conn = sqlite3.connect(str(args.db), timeout=30)
-    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA journal_mode=DELETE;")  # not WAL on GlusterFS (#292)
     conn.execute("PRAGMA busy_timeout=5000;")
 
     total_targeted = 0

@@ -45,7 +45,7 @@ other environments.
 - Domain name configured
 - Redis for caching / rate limiting (optional but recommended)
 
-> **Database**: SQLite with WAL mode is the only supported backend.
+> **Database**: SQLite (rollback-journal mode) is the only supported backend.
 > The schema is created and migrated automatically on startup; the
 > file lives under `data/ke_wp_mapping.db` (or wherever
 > `DATABASE_PATH` points). Earlier drafts of this guide referenced
@@ -113,7 +113,9 @@ LOG_FILE=/var/log/ke-wp-mapping/app.log
 
 ### 4. Database Setup
 
-The application uses **SQLite with WAL mode**. There is no manual
+The application uses **SQLite in rollback-journal mode** (`journal_mode=DELETE`),
+not WAL: WAL's shared-memory index is unsafe on network filesystems such as the
+GlusterFS mount used in production (#292). There is no manual
 database-setup step: on first startup the SQLite file at
 `DATABASE_PATH` is created if absent, schema migrations run
 automatically, and pre-computed embeddings are loaded from `data/`.
@@ -344,8 +346,8 @@ wherever the scheduler places it and does not pin either service to a node.
 
 `backup_db.sh` uses `sqlite3 .backup` (the [Online Backup API](https://sqlite.org/backup.html)),
 which is safe while the application is writing, then runs `PRAGMA integrity_check`
-and deletes the backup if it fails. Never copy the `.db` file without its `-wal`
-and `-shm` companions — that yields a torn snapshot.
+and deletes the backup if it fails. Never copy the `.db` file by hand while the
+application is running; that can yield a torn snapshot.
 
 ```bash
 # Run off-schedule
