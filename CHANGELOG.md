@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Request metrics were never recorded in production.** The `monitor_performance` decorator
+  wrote through an import-time collector bound to the relative path `ke_wp_mapping.db`, which is
+  unwritable under `/app`, so every start logged "unable to open database file" and every
+  monitored request logged a failed store. Metrics now go through the app's configured collector
+  into their own `metrics.db` beside the curation database (`METRICS_DATABASE_PATH` overrides),
+  never into the curation database itself. Client IP and user agent are no longer stored; rows
+  older than 30 days are purged. A persistent store failure warns once per worker, not per request.
+- **Deletion proposals showed "None → None" in the WikiPathways and Reactome admin queues (#289).**
+  The queues now name the mapping a deletion removes, and say so when that mapping no longer exists.
+- **Preview modals showed "Anonymous" for signed-in curators (#214).** They now show the identity
+  the proposal will be attributed to.
+- **A Key Event absent from the KE snapshot was re-warned on every `/health` probe.** About 38% of
+  production log lines were this one warning for KE 1419. It is now logged once per Key Event per
+  worker; detection is unchanged (the retirement policy is #278).
 - **WikiPathways suggestions dropped the Key Event description on a cache miss (#280).**
   The suggester passed an empty description, so a Key Event missing from the precomputed
   title+description KE vectors was encoded from its title alone while the description toggle
