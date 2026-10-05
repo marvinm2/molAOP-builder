@@ -89,7 +89,14 @@ def test_decorator_degrades_without_app_context():
     assert plain() == 42
 
 
-def test_decorator_degrades_without_service_container(sync_threads):
+def test_decorator_degrades_without_service_container(
+    sync_threads, tmp_path, monkeypatch
+):
+    def _must_not_record(*args, **kwargs):
+        raise AssertionError("recorded without a service container")
+
+    monkeypatch.setattr(MetricsCollector, "record_request", _must_not_record)
+    monkeypatch.chdir(tmp_path)
     app = Flask(__name__)
 
     @app.route("/probe")
@@ -98,6 +105,101 @@ def test_decorator_degrades_without_service_container(sync_threads):
         return "ok"
 
     assert app.test_client().get("/probe").status_code == 200
+    # Nothing falls back to a relative database in the working directory.
+    assert not (tmp_path / "ke_wp_mapping.db").exists()
+
+
+def test_failing_route_records_500_and_reraises(tmp_path, sync_threads):
+    db_path = str(tmp_path / "metrics.db")
+    app = Flask(__name__)
+    app.service_container = SimpleNamespace(metrics_collector=MetricsCollector(db_path))
+
+    @app.route("/boom")
+    @monitor_performance
+    def boom():
+        raise ValueError("kaboom")
+
+    with app.test_request_context("/boom", headers={"User-Agent": "probe-agent"}):
+        app.preprocess_request()
+        with pytest.raises(ValueError, match="kaboom"):
+            app.view_functions["boom"]()
+
+    conn = sqlite3.connect(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT status_code, error_message, client_ip, user_agent FROM metrics"
+        ).fetchall()
+    finally:
+        conn.close()
+    assert rows == [(500, "kaboom", None, None)]
+
+
+def test_opportunistic_purge_on_store(tmp_path, sync_threads):
+    db_path = str(tmp_path / "metrics.db")
+    collector = MetricsCollector(db_path)
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO metrics (timestamp, endpoint, method, status_code, response_time)"
+        " VALUES (?, 'old', 'GET', 200, 0.1)",
+        (int(time.time()) - 40 * 86400,),
+    )
+    conn.commit()
+    conn.close()
+
+    collector._last_purge = time.time() - 2 * 86400
+    collector.record_request("new", "GET", 200, 0.01)
+
+    assert [r[0] for r in _rows(db_path)] == ["new"]
+
+
+def test_failed_purge_keeps_metric_row(tmp_path, sync_threads, monkeypatch):
+    db_path = str(tmp_path / "metrics.db")
+    collector = MetricsCollector(db_path)
+
+    def _locked(conn):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(collector, "_purge_old_metrics", _locked)
+    collector._last_purge = 0
+    collector.record_request("kept", "GET", 200, 0.01)
+
+    assert [r[0] for r in _rows(db_path)] == ["kept"]
+
+
+def test_init_scrubs_previously_stored_ip_and_ua(tmp_path):
+    db_path = str(tmp_path / "metrics.db")
+    MetricsCollector(db_path)
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO metrics (timestamp, endpoint, method, status_code,"
+        " response_time, client_ip, user_agent)"
+        " VALUES (?, 'legacy', 'GET', 200, 0.1, '203.0.113.7', 'old-agent')",
+        (int(time.time()),),
+    )
+    conn.commit()
+    conn.close()
+
+    MetricsCollector(db_path)
+
+    assert _rows(db_path)[0][4:] == (None, None)
+
+
+def test_real_app_records_through_container(tmp_path, sync_threads, monkeypatch):
+    """The real create_app wiring: a monitored blueprint route writes a row to
+    the container's DATABASE_PATH, and the health flag then reports it."""
+    from app import app as real_app
+
+    container = real_app.service_container
+    db_path = str(tmp_path / "metrics.db")
+    monkeypatch.setattr(container.config, "DATABASE_PATH", db_path)
+    monkeypatch.setattr(container, "_metrics_collector", None)
+
+    resp = real_app.test_client().get("/documentation")
+    assert resp.status_code == 200
+
+    assert [r[:3] for r in _rows(db_path)] == [("main.documentation", "GET", 200)]
+    assert container._metrics_collector is not None
+    assert container._metrics_collector.db_path == db_path
 
 
 def test_old_rows_purged_at_init(tmp_path):

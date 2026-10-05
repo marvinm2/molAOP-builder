@@ -20,6 +20,8 @@ _PURGE_INTERVAL_SECONDS = 86400
 
 # A store failure is usually persistent (unwritable path), so it is reported
 # at WARNING once per process and at DEBUG after that, not once per request.
+# Under gunicorn "process" means worker: a recycled worker (max_requests)
+# starts fresh and may warn once more.
 _store_failure_warned = False
 
 
@@ -94,6 +96,14 @@ class MetricsCollector:
 
             self._purge_old_metrics(conn)
 
+            # Client IP and user agent are no longer recorded; clear any
+            # values written before that change rather than wait for them
+            # to age out. Idempotent, and a no-op once the columns are NULL.
+            conn.execute(
+                "UPDATE metrics SET client_ip = NULL, user_agent = NULL"
+                " WHERE client_ip IS NOT NULL OR user_agent IS NOT NULL"
+            )
+
             conn.commit()
             conn.close()
             logger.info("Metrics tables initialized")
@@ -153,6 +163,7 @@ class MetricsCollector:
     ):
         """Store metric in database asynchronously"""
         global _store_failure_warned
+        conn = None
         try:
             conn = sqlite3.connect(self.db_path)
             conn.execute(
@@ -170,16 +181,26 @@ class MetricsCollector:
                     error_message,
                 ),
             )
-            if time.time() - self._last_purge > _PURGE_INTERVAL_SECONDS:
-                self._purge_old_metrics(conn)
             conn.commit()
-            conn.close()
         except Exception as e:
             if _store_failure_warned:
                 logger.debug("Failed to store metric: %s", e)
             else:
                 _store_failure_warned = True
                 logger.warning("Failed to store metric: %s", e)
+            if conn is not None:
+                conn.close()
+            return
+        # The purge runs after the insert has committed, so a failed purge
+        # (e.g. a locked database) cannot cost the metric row.
+        try:
+            if time.time() - self._last_purge > _PURGE_INTERVAL_SECONDS:
+                self._purge_old_metrics(conn)
+                conn.commit()
+        except Exception as e:
+            logger.debug("Failed to purge old metrics: %s", e)
+        finally:
+            conn.close()
 
     def get_endpoint_stats(self, endpoint: str, hours: int = 24) -> Dict[str, Any]:
         """Get statistics for a specific endpoint"""
