@@ -95,6 +95,19 @@ class Config:
     def DATABASE_PATH(self):
         return os.getenv("DATABASE_PATH", "/app/data/ke_wp_mapping.db")
 
+    @property
+    def METRICS_DATABASE_PATH(self):
+        # Request metrics live in their own file beside the curation database,
+        # never in it: the curation DB is on GlusterFS with a rollback journal
+        # and synchronous=FULL (#292), and a write per monitored request would
+        # contend for its lock with curators' writes.
+        explicit = os.getenv("METRICS_DATABASE_PATH")
+        if explicit:
+            return explicit
+        if self.DATABASE_PATH == ":memory:":
+            return ":memory:"
+        return os.path.join(os.path.dirname(self.DATABASE_PATH), "metrics.db")
+
     # Admin Configuration
     ADMIN_USERS = [
         user.strip() for user in os.getenv("ADMIN_USERS", "").split(",") if user.strip()

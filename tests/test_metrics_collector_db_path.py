@@ -190,8 +190,10 @@ def test_real_app_records_through_container(tmp_path, sync_threads, monkeypatch)
     from app import app as real_app
 
     container = real_app.service_container
+    curation_db = tmp_path / "ke_wp_mapping.db"
     db_path = str(tmp_path / "metrics.db")
-    monkeypatch.setattr(container.config, "DATABASE_PATH", db_path)
+    monkeypatch.delenv("METRICS_DATABASE_PATH", raising=False)
+    monkeypatch.setattr(container.config, "DATABASE_PATH", str(curation_db))
     monkeypatch.setattr(container, "_metrics_collector", None)
 
     resp = real_app.test_client().get("/documentation")
@@ -200,6 +202,18 @@ def test_real_app_records_through_container(tmp_path, sync_threads, monkeypatch)
     assert [r[:3] for r in _rows(db_path)] == [("main.documentation", "GET", 200)]
     assert container._metrics_collector is not None
     assert container._metrics_collector.db_path == db_path
+    # Metrics must never be written into the curation database itself.
+    assert not curation_db.exists()
+
+
+def test_metrics_path_defaults_beside_curation_db(monkeypatch):
+    from src.core.config import Config
+
+    monkeypatch.delenv("METRICS_DATABASE_PATH", raising=False)
+    monkeypatch.setenv("DATABASE_PATH", "/app/data/ke_wp_mapping.db")
+    assert Config().METRICS_DATABASE_PATH == "/app/data/metrics.db"
+    monkeypatch.setenv("METRICS_DATABASE_PATH", "/elsewhere/m.db")
+    assert Config().METRICS_DATABASE_PATH == "/elsewhere/m.db"
 
 
 def test_old_rows_purged_at_init(tmp_path):

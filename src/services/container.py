@@ -137,7 +137,9 @@ class ServiceContainer:
     def metrics_collector(self) -> MetricsCollector:
         """Get or create metrics collector instance"""
         if self._metrics_collector is None:
-            self._metrics_collector = MetricsCollector(self.config.DATABASE_PATH)
+            self._metrics_collector = MetricsCollector(
+                self.config.METRICS_DATABASE_PATH
+            )
             logger.debug("MetricsCollector instance created")
         return self._metrics_collector
 
