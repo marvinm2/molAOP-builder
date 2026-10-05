@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.9.1] - 2026-10-05
+
+### Fixed
+
+- **The database no longer runs in SQLite WAL mode (#292).** In production `ke_wp_mapping.db`
+  lives on a GlusterFS mount, and WAL keeps its index in a shared-memory `-shm` file, which
+  SQLite documents as unsafe on network filesystems. The risk was not theoretical: another
+  service's WAL database on the same mount was corrupted in August 2026, and nobody noticed
+  for five weeks because the write errors were swallowed. This database was still intact
+  when it was switched. Every connection now sets `journal_mode=DELETE` and
+  `synchronous=FULL`; the pragma also converts a database left in WAL mode, which is what
+  happened to the production file on first start. `scripts/backfill_source_versions.py`
+  follows suit. The backup method (`sqlite3 .backup`) is unchanged and works in both modes.
+
 ## [2.9.0] - 2026-08-13
 
 ### Fixed
