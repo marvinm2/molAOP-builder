@@ -229,7 +229,6 @@ Documentation content extracted from:
 
 ## 🔗 Related Documentation
 
-- **Plan File**: `/home/marvin/.claude/plans/temporal-knitting-mochi.md` (original implementation plan)
 - **Project Documentation**: `CLAUDE.md` (comprehensive codebase guide)
 - **Deployment Guide**: `README.md` (setup and deployment instructions)
 - **API Documentation**: Available at `/documentation/api` when app is running
