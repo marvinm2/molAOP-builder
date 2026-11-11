@@ -132,8 +132,10 @@ jobs:
     - name: Push Docker image
       # main, or a release tag. The gate used to name refs/heads/main alone, so
       # even once the tag trigger existed the build would have run and pushed
-      # nothing.
-      if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref_type == 'tag')
+      # nothing. A manual dispatch on main publishes too, so a push run that
+      # GitHub leaves stuck in the queue can be replaced with
+      # `gh workflow run docker.yml --ref main`.
+      if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || github.ref_type == 'tag')
       uses: docker/build-push-action@v7
       with:
         context: .
