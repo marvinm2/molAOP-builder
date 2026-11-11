@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `ke_aop_membership.json` (which backs `/api/v1/aops`, so new AOPs were missing from the AOP
     list), `ker_adjacency.json` and `aop_oecd_status.json`. Those three scripts write atomically
     and exit non-zero, keeping the old snapshot, when AOP-Wiki returns nothing.
+  - `precompute_go_embeddings.py` downloads `go.obo` over HTTPS with a User-Agent: GO answers
+    403 to urllib's default one, which surfaced on the first forced download.
 
 ## [2.10.0] - 2026-10-05
 

@@ -317,3 +317,22 @@ def test_capture_gene_ontology_upstream_error_is_unknown(monkeypatch) -> None:
         raise cap.requests.ConnectionError("down")
     monkeypatch.setattr(cap.requests, "get", _boom)
     assert cap.capture_gene_ontology_upstream()["status"] == "unknown"
+
+
+def test_go_obo_download_sends_a_user_agent(monkeypatch, tmp_path) -> None:
+    """GO answers 403 to urllib's default User-Agent; the forced download in the
+    weekly GO rebuild failed on exactly that (2026-11-11)."""
+    import io
+    import os
+    # The script imports its sibling embedding_utils as a top-level module.
+    monkeypatch.syspath_prepend(os.path.join(os.path.dirname(__file__), "..", "scripts"))
+    import scripts.precompute_go_embeddings as pge
+    seen = {}
+    def _urlopen(req):
+        seen["ua"] = req.get_header("User-agent")
+        return io.BytesIO(b"format-version: 1.2\n")
+    monkeypatch.setattr(pge, "urlopen", _urlopen)
+    out = tmp_path / "go.obo"
+    pge.download_go_obo(local_path=str(out), force=True)
+    assert seen["ua"] and "urllib" not in seen["ua"].lower()
+    assert out.read_text().startswith("format-version")

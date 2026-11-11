@@ -26,7 +26,8 @@ import os
 import re
 import json
 import logging
-from urllib.request import urlretrieve
+import shutil
+from urllib.request import Request, urlopen
 
 from embedding_utils import setup_project_path, init_embedding_service, compute_embeddings_batch, save_embeddings
 
@@ -37,7 +38,7 @@ from src.utils.text import remove_directionality_terms, extract_entities, detect
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-GO_OBO_URL = "http://purl.obolibrary.org/obo/go.obo"
+GO_OBO_URL = "https://purl.obolibrary.org/obo/go.obo"
 GO_OBO_LOCAL = "data/go.obo"
 
 # Namespace filter map: CLI arg -> OBO namespace value
@@ -54,7 +55,12 @@ def download_go_obo(url=GO_OBO_URL, local_path=GO_OBO_LOCAL, force=False):
         return local_path
 
     logger.info(f"Downloading GO OBO file from {url}...")
-    urlretrieve(url, local_path + '.tmp')
+    # GO's server answers 403 to urllib's default User-Agent (seen 2026-11-11, the
+    # first forced download since the file was cached), so send one, as
+    # precompute_go_hierarchy.py does.
+    req = Request(url, headers={'User-Agent': 'KE-WP-Mapping/1.0'})
+    with urlopen(req) as response, open(local_path + '.tmp', 'wb') as out_file:
+        shutil.copyfileobj(response, out_file)
     os.replace(local_path + '.tmp', local_path)
     logger.info(f"Downloaded to {local_path}")
     return local_path
