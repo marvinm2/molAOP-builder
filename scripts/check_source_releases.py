@@ -96,9 +96,13 @@ REBUILD = {
         # filtered (see the Makefile header). It was never here, which is what made
         # the cron and `make go-corpus` disagree (#284).
         "commands": [
-            ["python", "scripts/precompute_go_hierarchy.py"],
-            ["python", "scripts/download_go_annotations.py"],
-            ["python", "scripts/precompute_go_embeddings.py"],
+            # --force on the first use of each download (go-basic.obo, goa GAF,
+            # go.obo): without it the cached files from the first build were
+            # reused at every release, so a "rebuild" changed nothing and the
+            # stored version never moved (#297). The MF steps reuse those files.
+            ["python", "scripts/precompute_go_hierarchy.py", "--force"],
+            ["python", "scripts/download_go_annotations.py", "--force"],
+            ["python", "scripts/precompute_go_embeddings.py", "--force"],
             ["python", "scripts/precompute_go_hierarchy.py", "--namespace", "mf"],
             ["python", "scripts/download_go_annotations.py", "--namespace", "mf"],
             ["python", "scripts/precompute_go_embeddings.py", "--namespace", "mf"],
@@ -116,7 +120,8 @@ REBUILD = {
         # `make reactome-corpus` runs these same commands by hand, and a test
         # keeps the two equal.
         "commands": [
-            ["python", "scripts/download_reactome_annotations.py"],
+            # --force: re-download the GMT; the cached one predates the release.
+            ["python", "scripts/download_reactome_annotations.py", "--force"],
             ["python", "scripts/precompute_reactome_embeddings.py"],
         ],
         "artifacts": [
@@ -130,10 +135,23 @@ REBUILD = {
         # gracefully, because a Key Event without one is encoded live on a
         # miss. Rebuilding those too would turn a 30-second job into a long
         # one for no curator-visible gain — run `make ke-corpus` separately.
+        #
+        # The three snapshots below are cheap too (one SPARQL query each, no
+        # BioBERT), and they go stale with every AOP-Wiki release just like the
+        # dropdown: ke_aop_membership.json backs /api/v1/aops, so new AOPs were
+        # missing from the AOP list for months (#296, #297).
         "commands": [
             ["python", "scripts/precompute_ke_embeddings.py", "--metadata-only"],
+            ["python", "scripts/precompute_ke_aop_membership.py"],
+            ["python", "scripts/precompute_ker_adjacency.py"],
+            ["python", "scripts/precompute_oecd_status.py"],
         ],
-        "artifacts": ["data/ke_metadata.json"],
+        "artifacts": [
+            "data/ke_metadata.json",
+            "data/ke_aop_membership.json",
+            "data/ker_adjacency.json",
+            "data/aop_oecd_status.json",
+        ],
     },
 }
 

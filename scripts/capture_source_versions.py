@@ -175,6 +175,42 @@ def capture_gene_ontology(obo_path: Path = DEFAULT_OBO_PATH) -> dict:
     }
 
 
+GO_UPSTREAM_OBO_URL = "https://current.geneontology.org/ontology/go-basic.obo"
+
+
+def capture_gene_ontology_upstream(url: str = GO_UPSTREAM_OBO_URL) -> dict:
+    """
+    Read the data-version of the *current* GO release from the upstream OBO header.
+
+    capture_gene_ontology() reads the local file, which says what the corpus was
+    built from. Used as the "live" side of the release check it compared the
+    local file with itself, so a new GO release never registered as drift and
+    the corpus stayed on 2026-06-15 for months (#297). Only the first few
+    hundred bytes are fetched (Range request); the header comes first.
+    """
+    captured_at = _utcnow_iso()
+    try:
+        r = requests.get(url, headers={"Range": "bytes=0-1023"}, timeout=HTTP_TIMEOUT)
+        r.raise_for_status()
+    except requests.RequestException as e:
+        return _unknown(f"go upstream error: {e}", method="obo-header-upstream",
+                        endpoint=url, captured_at=captured_at)
+    m = re.search(r"^data-version:\s*(\S+)", r.text[:4096], re.MULTILINE)
+    if not m:
+        return _unknown("no data-version line in upstream OBO header",
+                        method="obo-header-upstream", endpoint=url, captured_at=captured_at)
+    label = m.group(1)
+    d = re.search(r"(\d{4}-\d{2}-\d{2})", label)
+    return {
+        "status": "ok",
+        "release_label": label,
+        "release_date": d.group(1) if d else None,
+        "method": "obo-header-upstream",
+        "endpoint": url,
+        "captured_at": captured_at,
+    }
+
+
 def capture_wikipathways(endpoint: str = WIKIPATHWAYS_SPARQL) -> dict:
     """
     Resolve the WikiPathways release from the void:Dataset IRI.

@@ -214,9 +214,36 @@ def test_aopwiki_rebuild_is_the_cheap_metadata_only_path():
     cost a live encode on a miss. Pulling BioBERT into a routine refresh would
     make it too slow to run often, which is how the snapshot got stale."""
     commands = watcher.REBUILD["aopwiki"]["commands"]
-    assert commands == [
-        ["python", "scripts/precompute_ke_embeddings.py", "--metadata-only"]
-    ]
+    ke = [c for c in commands if c[1] == "scripts/precompute_ke_embeddings.py"]
+    assert ke == [["python", "scripts/precompute_ke_embeddings.py", "--metadata-only"]]
+
+
+def test_aopwiki_rebuild_refreshes_the_aop_snapshots():
+    """ke_aop_membership.json backs /api/v1/aops; when only the KE dropdown was
+    refreshed, AOPs added upstream stayed out of the AOP list for months (#296).
+    The snapshots are one SPARQL query each, so they belong in the cheap path."""
+    spec = watcher.REBUILD["aopwiki"]
+    scripts = [c[1] for c in spec["commands"]]
+    for script, artifact in [
+        ("scripts/precompute_ke_aop_membership.py", "data/ke_aop_membership.json"),
+        ("scripts/precompute_ker_adjacency.py", "data/ker_adjacency.json"),
+        ("scripts/precompute_oecd_status.py", "data/aop_oecd_status.json"),
+    ]:
+        assert script in scripts
+        assert artifact in spec["artifacts"]
+
+
+def test_release_rebuilds_force_fresh_downloads():
+    """Cached downloads survived every release, so a rebuild reproduced the old
+    corpus and the stored version never moved (#297)."""
+    go = watcher.REBUILD["gene_ontology"]["commands"]
+    for script in ("scripts/precompute_go_hierarchy.py",
+                   "scripts/download_go_annotations.py",
+                   "scripts/precompute_go_embeddings.py"):
+        first = next(c for c in go if c[1] == script)
+        assert "--force" in first, script
+    reactome = watcher.REBUILD["reactome"]["commands"]
+    assert "--force" in reactome[0]
 
 
 def _makefile_recipe(target):

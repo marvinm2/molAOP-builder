@@ -167,6 +167,10 @@ def main() -> None:
 
     index = build_oecd_status_index(endpoint=args.endpoint)
 
+    if not index.get("aops"):
+        logger.error("AOP-Wiki returned no OECD status rows; keeping the existing snapshot")
+        sys.exit(1)
+
     if args.dry_run:
         print(json.dumps(index, indent=2, ensure_ascii=False, sort_keys=True))
         logger.info("Dry-run: JSON printed to stdout. %d AOPs.", len(index["aops"]))
@@ -175,8 +179,13 @@ def main() -> None:
     output_path = os.path.join(_PROJECT_ROOT, "data", "aop_oecd_status.json")
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-    with open(output_path, "w", encoding="utf-8") as fh:
+    # Write a sibling and rename: an in-place rewrite truncates first (a failed run
+    # would leave a half file), and the rename also works on a file this uid does
+    # not own, which is the case for snapshots once written by hand on the host.
+    tmp = output_path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(index, fh, indent=2, ensure_ascii=False, sort_keys=True)
+    os.replace(tmp, output_path)
 
     logger.info(
         "Wrote aop_oecd_status.json: %d AOPs -> %s",

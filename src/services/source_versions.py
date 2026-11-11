@@ -75,14 +75,16 @@ def snapshot() -> dict:
     # path at module import time (tests can monkeypatch before snapshot() runs).
     from scripts.capture_source_versions import (
         capture_wikipathways,
-        capture_gene_ontology,
+        capture_gene_ontology_upstream,
         capture_reactome,
         capture_aopwiki,
     )
 
     fetchers = {
         "wikipathways": (capture_wikipathways, _extract_wp),
-        "gene_ontology": (capture_gene_ontology, _extract_go),
+        # Upstream, not the local OBO: the local file is what the corpus was
+        # built from, so comparing it with itself never shows a new release.
+        "gene_ontology": (capture_gene_ontology_upstream, _extract_go),
         "reactome":      (capture_reactome,      _extract_reactome),
         "aopwiki":       (capture_aopwiki,        _extract_aopwiki),
     }

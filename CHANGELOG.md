@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The weekly corpus refresh now actually refreshes (#296, #297).** Four faults kept the
+  corpora behind upstream while every run looked clean:
+  - The "upstream" GO version was read from the local `go-basic.obo`, so the check compared
+    the corpus with itself and a new GO release never showed as drift. The live side now reads
+    the `data-version` header of the current upstream OBO (a 1 KB range request).
+  - A rebuild reused the cached downloads (`go-basic.obo`, `go.obo`, the GOA GAF, the Reactome
+    GMT), so a release rebuild reproduced the old corpus. The release rebuilds pass `--force`
+    (new for `download_go_annotations.py` and `precompute_go_embeddings.py`), and downloads are
+    written to a sibling and renamed.
+  - The Reactome Content Service answering 5xx once stopped the whole week's rebuild. It is now
+    retried four times over about seven minutes.
+  - An AOP-Wiki release refreshed only the KE dropdown. It now also rebuilds
+    `ke_aop_membership.json` (which backs `/api/v1/aops`, so new AOPs were missing from the AOP
+    list), `ker_adjacency.json` and `aop_oecd_status.json`. Those three scripts write atomically
+    and exit non-zero, keeping the old snapshot, when AOP-Wiki returns nothing.
+
 ## [2.10.0] - 2026-10-05
 
 ### Fixed

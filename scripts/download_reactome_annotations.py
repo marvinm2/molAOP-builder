@@ -22,6 +22,7 @@ import json
 import logging
 import os
 import sys
+import time
 import zipfile
 
 import requests
@@ -93,6 +94,10 @@ def _download_file(url, dest_path):
                 f.write(chunk)
 
 
+# Seconds to wait between Content Service attempts (four tries over ~7 minutes).
+_RETRY_DELAYS = (30, 90, 300)
+
+
 def download_gmt(url=GMT_URL, zip_path=GMT_ZIP_LOCAL, gmt_path=GMT_LOCAL, force=False):
     """
     Download and extract ReactomePathways.gmt if not already present.
@@ -122,8 +127,9 @@ def download_gmt(url=GMT_URL, zip_path=GMT_ZIP_LOCAL, gmt_path=GMT_LOCAL, force=
             raise ValueError(f"No .gmt file found in {zip_path}")
         gmt_name = gmt_names[0]
         logger.info("Extracting %s ...", gmt_name)
-        with zf.open(gmt_name) as src, open(gmt_path, 'wb') as dst:
+        with zf.open(gmt_name) as src, open(gmt_path + '.tmp', 'wb') as dst:
             dst.write(src.read())
+        os.replace(gmt_path + '.tmp', gmt_path)
 
     logger.info("Extracted to %s", gmt_path)
     return gmt_path
@@ -246,12 +252,26 @@ def _get_content_service(path, timeout=60):
     url = f"https://reactome.org{path}"
     headers = {"Accept": "application/json", "User-Agent": "Python/3 ReactomePipeline/1.0"}
 
-    try:
-        resp = requests.get(url, headers=headers, timeout=timeout)
-        resp.raise_for_status()
-        return resp.json()
-    except (requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError) as e:
-        logger.warning("Direct HTTPS failed (%s), trying via resolved IP ...", e)
+    # Reactome's Content Service answers 5xx for minutes at a time (521 on
+    # 2026-11-02 stopped that week's rebuild). Ride out a short outage before
+    # giving up; the weekly job has the time.
+    last_error = None
+    for attempt, delay in enumerate(_RETRY_DELAYS + (None,), start=1):
+        try:
+            resp = requests.get(url, headers=headers, timeout=timeout)
+            if resp.status_code < 500:
+                resp.raise_for_status()
+                return resp.json()
+            last_error = requests.exceptions.HTTPError(
+                f"{resp.status_code} Server Error for url: {url}", response=resp)
+        except (requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError) as e:
+            last_error = e
+            break  # the IP/SNI fallback below handles connection-level failures
+        if delay is None:
+            raise last_error
+        logger.warning("Reactome %s (attempt %d); retrying in %ds", last_error, attempt, delay)
+        time.sleep(delay)
+    logger.warning("Direct HTTPS failed (%s), trying via resolved IP ...", last_error)
 
     # Fallback: resolve hostname and connect via IP with SNI
     try:

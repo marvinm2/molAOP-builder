@@ -369,6 +369,9 @@ def main():
         aop_kers = fetch_ker_edges_fallback()
 
     logger.info("Total AOPs with KER data: %d", len(aop_kers))
+    if not aop_kers:
+        logger.error("No KER edges from AOP-Wiki; keeping the existing snapshot")
+        sys.exit(1)
 
     # Step 2: Fetch KE type classifications (MIE / AO)
     aop_mies, aop_aos = fetch_ke_types()
@@ -393,8 +396,13 @@ def main():
     output_path = os.path.join(_PROJECT_ROOT, "data", "ker_adjacency.json")
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-    with open(output_path, "w", encoding="utf-8") as f:
+    # Write a sibling and rename: an in-place rewrite truncates first (a failed run
+    # would leave a half file), and the rename also works on a file this uid does
+    # not own, which is the case for snapshots once written by hand on the host.
+    tmp = output_path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(output, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, output_path)
 
     logger.info(
         "Wrote ker_adjacency.json: %d AOPs, %d KERs, %d KEs -> %s",

@@ -47,14 +47,19 @@ ASPECT_CODE = {
 }
 
 
-def download_goa_file(url=GOA_URL, local_path=GOA_LOCAL):
-    """Download GOA file if not already present"""
-    if os.path.exists(local_path):
+def download_goa_file(url=GOA_URL, local_path=GOA_LOCAL, force=False):
+    """Download the GOA file if not already present, or always with force=True.
+
+    A release rebuild must pass force: the cached file otherwise survives every
+    GO release and the "rebuilt" corpus keeps the old annotations.
+    """
+    if os.path.exists(local_path) and not force:
         logger.info(f"Using existing GOA file: {local_path}")
         return local_path
 
     logger.info(f"Downloading GOA file from {url}...")
-    urlretrieve(url, local_path)
+    urlretrieve(url, local_path + '.tmp')
+    os.replace(local_path + '.tmp', local_path)
     logger.info(f"Downloaded to {local_path}")
     return local_path
 
@@ -131,7 +136,7 @@ def parse_gaf_file(gaf_path, aspect_code='P'):
     return go_gene_map
 
 
-def download_go_annotations(namespace='bp', output_path=None):
+def download_go_annotations(namespace='bp', output_path=None, force=False):
     """
     Download and process GO gene annotations for human.
 
@@ -146,7 +151,7 @@ def download_go_annotations(namespace='bp', output_path=None):
     logger.info(f"Downloading GO {namespace.upper()} gene annotations (aspect={aspect_code})")
 
     # Download GOA file
-    gaf_path = download_goa_file()
+    gaf_path = download_goa_file(force=force)
 
     # Parse GAF file
     go_gene_map = parse_gaf_file(gaf_path, aspect_code=aspect_code)
@@ -187,5 +192,9 @@ if __name__ == '__main__':
         '--namespace', choices=['bp', 'mf'], default='bp',
         help='GO namespace to download: bp (Biological Process, default) or mf (Molecular Function)'
     )
+    parser.add_argument(
+        '--force', action='store_true',
+        help='Re-download the GOA file even if a copy is cached in data/'
+    )
     args = parser.parse_args()
-    download_go_annotations(namespace=args.namespace)
+    download_go_annotations(namespace=args.namespace, force=args.force)

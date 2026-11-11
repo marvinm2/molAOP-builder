@@ -66,7 +66,7 @@ def test_snapshot_returns_expected_keys_and_shape(monkeypatch):
     import src.services.source_versions as svc
 
     monkeypatch.setattr(cap, "capture_wikipathways", lambda **kw: _ok_wp())
-    monkeypatch.setattr(cap, "capture_gene_ontology", lambda **kw: _ok_go())
+    monkeypatch.setattr(cap, "capture_gene_ontology_upstream", lambda **kw: _ok_go())
     monkeypatch.setattr(cap, "capture_reactome", lambda **kw: _ok_reactome())
     monkeypatch.setattr(cap, "capture_aopwiki", lambda **kw: _ok_aopwiki())
 
@@ -98,7 +98,7 @@ def test_snapshot_ttl_caching(monkeypatch):
         return _ok_wp()
 
     monkeypatch.setattr(cap, "capture_wikipathways", counting_wp)
-    monkeypatch.setattr(cap, "capture_gene_ontology", lambda **kw: _ok_go())
+    monkeypatch.setattr(cap, "capture_gene_ontology_upstream", lambda **kw: _ok_go())
     monkeypatch.setattr(cap, "capture_reactome", lambda **kw: _ok_reactome())
     monkeypatch.setattr(cap, "capture_aopwiki", lambda **kw: _ok_aopwiki())
 
@@ -124,7 +124,7 @@ def test_snapshot_unavailable_on_failure(monkeypatch):
     def raising_go(**kw):
         raise RuntimeError("network down")
 
-    monkeypatch.setattr(cap, "capture_gene_ontology", raising_go)
+    monkeypatch.setattr(cap, "capture_gene_ontology_upstream", raising_go)
     monkeypatch.setattr(cap, "capture_reactome", lambda **kw: _ok_reactome())
     monkeypatch.setattr(cap, "capture_aopwiki", lambda **kw: _ok_aopwiki())
 
@@ -158,7 +158,7 @@ def test_snapshot_version_normalization(monkeypatch):
         "status": "ok", "release_date": "2026-05-10"
     })
     # GO already ISO
-    monkeypatch.setattr(cap, "capture_gene_ontology", lambda **kw: {
+    monkeypatch.setattr(cap, "capture_gene_ontology_upstream", lambda **kw: {
         "status": "ok", "release_date": "2026-03-25"
     })
     # Reactome bare integer → should be 'v96' or '96' (a release number, not a date)

@@ -129,8 +129,9 @@ def download_go_obo(url=GO_BASIC_OBO_URL, local_path=GO_BASIC_OBO_LOCAL, force=F
 
     logger.info(f"Downloading go-basic.obo from {url}...")
     req = Request(url, headers={'User-Agent': 'KE-WP-Mapping/1.0'})
-    with urlopen(req) as response, open(local_path, 'wb') as out_file:
+    with urlopen(req) as response, open(local_path + '.tmp', 'wb') as out_file:
         out_file.write(response.read())
+    os.replace(local_path + '.tmp', local_path)
     size_mb = os.path.getsize(local_path) / 1024 / 1024
     logger.info(f"Downloaded to {local_path} ({size_mb:.1f} MB)")
     return local_path

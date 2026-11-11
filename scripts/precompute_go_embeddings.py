@@ -47,14 +47,15 @@ NAMESPACE_FILTER = {
 }
 
 
-def download_go_obo(url=GO_OBO_URL, local_path=GO_OBO_LOCAL):
-    """Download GO OBO file if not already present"""
-    if os.path.exists(local_path):
+def download_go_obo(url=GO_OBO_URL, local_path=GO_OBO_LOCAL, force=False):
+    """Download the GO OBO file if not already present, or always with force=True"""
+    if os.path.exists(local_path) and not force:
         logger.info(f"Using existing OBO file: {local_path}")
         return local_path
 
     logger.info(f"Downloading GO OBO file from {url}...")
-    urlretrieve(url, local_path)
+    urlretrieve(url, local_path + '.tmp')
+    os.replace(local_path + '.tmp', local_path)
     logger.info(f"Downloaded to {local_path}")
     return local_path
 
@@ -154,7 +155,8 @@ def precompute_go_embeddings(
     namespace='bp',
     embeddings_path=None,
     name_embeddings_path=None,
-    metadata_path=None
+    metadata_path=None,
+    force=False
 ):
     """
     Parse GO OBO file and pre-compute BioBERT embeddings for GO terms.
@@ -183,7 +185,7 @@ def precompute_go_embeddings(
     logger.info(f"Precomputing GO embeddings for namespace: {namespace_value}")
 
     # Download OBO file
-    obo_path = download_go_obo()
+    obo_path = download_go_obo(force=force)
 
     # Parse GO terms for the selected namespace
     go_terms = parse_obo_file(obo_path, namespace_value=namespace_value)
@@ -231,5 +233,9 @@ if __name__ == '__main__':
         '--namespace', choices=['bp', 'mf'], default='bp',
         help='GO namespace to process: bp (Biological Process, default) or mf (Molecular Function)'
     )
+    parser.add_argument(
+        '--force', action='store_true',
+        help='Re-download go.obo even if a copy is cached in data/'
+    )
     args = parser.parse_args()
-    precompute_go_embeddings(namespace=args.namespace)
+    precompute_go_embeddings(namespace=args.namespace, force=args.force)

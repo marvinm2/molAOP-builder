@@ -87,7 +87,7 @@ wp-corpus:	## Rebuild the WikiPathways corpus (annotations -> title embeddings -
 # keeps them equal. The order matters: the download writes the gene
 # annotations and filtered stIds that the embedding script needs as input.
 reactome-corpus:	## Rebuild the Reactome corpus (annotations + filtered stIds -> name/description embeddings). Same commands as the weekly cron
-	python scripts/download_reactome_annotations.py
+	python scripts/download_reactome_annotations.py --force
 	python scripts/precompute_reactome_embeddings.py
 
 ke-corpus:	## Rebuild the KE embeddings (title-only + with-description) from the existing ke_metadata.json snapshot

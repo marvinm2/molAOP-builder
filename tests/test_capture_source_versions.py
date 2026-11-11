@@ -292,3 +292,28 @@ def test_capture_wikipathways_handles_non_rdf_suffix_iris(monkeypatch) -> None:
 
     assert rec["status"] == "ok"
     assert rec["release_date"] == "2026-07-10"
+
+
+def test_capture_gene_ontology_upstream_reads_the_remote_header(monkeypatch) -> None:
+    """The live side of the release check must be upstream, not the local file
+    the corpus was built from (#297)."""
+    class _Resp:
+        text = "format-version: 1.2\ndata-version: releases/2026-07-26\n"
+        def raise_for_status(self):
+            pass
+    seen = {}
+    def _get(url, headers=None, timeout=None):
+        seen["range"] = (headers or {}).get("Range")
+        return _Resp()
+    monkeypatch.setattr(cap.requests, "get", _get)
+    rec = cap.capture_gene_ontology_upstream()
+    assert rec["status"] == "ok"
+    assert rec["release_date"] == "2026-07-26"
+    assert seen["range"], "only the header should be fetched"
+
+
+def test_capture_gene_ontology_upstream_error_is_unknown(monkeypatch) -> None:
+    def _boom(*a, **k):
+        raise cap.requests.ConnectionError("down")
+    monkeypatch.setattr(cap.requests, "get", _boom)
+    assert cap.capture_gene_ontology_upstream()["status"] == "unknown"
