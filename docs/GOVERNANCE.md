@@ -16,7 +16,7 @@ This document specifies who is **Responsible / Accountable / Consulted / Informe
 | **Lead Developer** | Marvin Martens (GitHub [`marvinm2`](https://github.com/marvinm2)) | `git log --pretty=format:'%an'` |
 | **Curator / Admin** | Holders of admin privilege on the live instance | `ADMIN_USERS` environment variable on the swarm service (`ssh tgx1 'docker service inspect molaop-builder \| grep ADMIN_USERS'`) |
 | **Proposer** | Any user who has authenticated via OAuth (GitHub, ORCID, LS Login, or SURFconext) and submitted a mapping proposal | `proposals`, `ke_go_proposals`, and `ke_reactome_proposals` tables in `ke_wp_mapping.db` |
-| **Cluster Operator** | Sean Laenen (`slaenen`) — VHP4Safety Strato Swarm administrator | `/mnt/gluster/documentation/operations/user-management.md` on `tgx1` |
+| **Cluster Operator** | The TGX cluster administrator (Translational Genomics, Maastricht University) — VHP4Safety Strato Swarm | `/mnt/gluster/documentation/operations/user-management.md` on `tgx1` |
 | **Data Protection Officer** | Maastricht University institutional DPO | Direct contact channel TBC; subject-rights requests are routed via the Data Steward, who forwards to the DPO for sign-off. |
 
 Multiple roles may be held by the same person; today the Data Steward and Lead Developer are both Marvin Martens. The matrix below operates on *roles* — assignment to people is fluid and recorded in the table above.
@@ -53,7 +53,7 @@ Each row has **exactly one Accountable role**; that role signs off and owns the 
 
 ## 3. Escalation
 
-- **Cluster-wide change or shared-infrastructure operation:** contact the Cluster Operator (`slaenen`) before action. The change must reference an entry in `/mnt/gluster/documentation/operations/` on `tgx1`.
+- **Cluster-wide change or shared-infrastructure operation:** contact the Cluster Operator before action. The change must reference an entry in `/mnt/gluster/documentation/operations/` on `tgx1`.
 - **Data-protection request or GDPR subject right:** route to the MU institutional DPO. The Data Steward acts as the technical contact and prepares the response; the DPO signs off before any data is released or erased.
 - **Disagreement between curators on a proposal decision:** the Data Steward decides. Rationale is recorded in the `proposals` row's notes field so the audit trail remains intact.
 - **Security incident (suspected breach, credential compromise, dependency CVE in active exploit):** Lead Developer triages immediately; if the data layer is affected, the DPO is notified within 24 hours per MU institutional policy.
