@@ -30,7 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl sqlite3 \
 
 # #158 follow-up: align container uid/gid with the host owner of the bind-
 # mounted /app/data volume (currently /mnt/gluster/docker/molaop-builder/data
-# on tgx1, owned by mmartens uid=1000). Pass APP_UID/APP_GID at build time
+# on tgx1, owned by the deploying user, uid=1000). Pass APP_UID/APP_GID at build time
 # if the host owner differs. Default 1000 covers the typical Linux uid and
 # matches the current production deployment.
 #
